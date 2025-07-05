@@ -3,8 +3,10 @@ from flask_cors import CORS
 import pickle
 import os
 import json
+import time
 from state import GameState
 from simple_auth import require_lecturer_auth, require_board_auth, require_auth, optional_auth, auth
+from binary_protocol import BoardBinaryProtocol, BinaryProtocolError
 
 app = Flask(__name__)
 
@@ -53,9 +55,36 @@ def login():
         'metadata': metadata
     })
 
+@app.route('/register_binary', methods=['POST'])
+@require_board_auth
+def register_binary():
+    """Binary board registration endpoint optimized for ESP32"""
+    try:
+        data = request.get_data()
+        board_id, board_name, board_type = BoardBinaryProtocol.unpack_registration_request(data)
+        
+        # Validate board_id
+        if board_id <= 0:
+            response = BoardBinaryProtocol.pack_registration_response(False, "Invalid board ID")
+            return response, 400, {'Content-Type': 'application/octet-stream'}
+        
+        # Register the board
+        board = game_state.register_board(board_id, board_name, board_type)
+        
+        response = BoardBinaryProtocol.pack_registration_response(True, "Registration successful")
+        return response, 200, {'Content-Type': 'application/octet-stream'}
+        
+    except BinaryProtocolError as e:
+        response = BoardBinaryProtocol.pack_registration_response(False, str(e))
+        return response, 400, {'Content-Type': 'application/octet-stream'}
+    except Exception as e:
+        response = BoardBinaryProtocol.pack_registration_response(False, "Internal error")
+        return response, 500, {'Content-Type': 'application/octet-stream'}
+
 @app.route('/register', methods=['POST'])
 @require_board_auth
 def register():
+    """Legacy JSON board registration endpoint (deprecated, use /register_binary)"""
     data = request.get_json()
     board_id = data.get('board_id')
     board_name = data.get('board_name')
@@ -72,9 +101,35 @@ def register():
         "registered_by": getattr(request, 'user', {}).get('name', 'Unknown')
     })
 
+@app.route('/power_data_binary', methods=['POST'])
+@require_board_auth
+def power_data_binary():
+    """Binary power data submission endpoint optimized for ESP32"""
+    try:
+        data = request.get_data()
+        board_id, generation, consumption, timestamp = BoardBinaryProtocol.unpack_power_data(data)
+        
+        # Validate timestamp (within reasonable bounds)
+        current_time = int(time.time())
+        if abs(timestamp - current_time) > 86400:  # More than 1 day difference
+            return b'TIME_ERROR', 400, {'Content-Type': 'application/octet-stream'}
+        
+        # Update board power
+        if not game_state.update_board_power(board_id, generation=generation, 
+                                           consumption=consumption, timestamp=timestamp):
+            return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
+        
+        return b'OK', 200, {'Content-Type': 'application/octet-stream'}
+        
+    except BinaryProtocolError as e:
+        return b'PROTOCOL_ERROR', 400, {'Content-Type': 'application/octet-stream'}
+    except Exception as e:
+        return b'INTERNAL_ERROR', 500, {'Content-Type': 'application/octet-stream'}
+
 @app.route('/power_generation', methods=['POST'])
 @require_board_auth
 def power_generation():
+    """Legacy JSON power generation endpoint (deprecated, use /power_data_binary)"""
     data = request.get_json()
     board_id = data.get('board_id')
     power = data.get('power')
@@ -91,6 +146,7 @@ def power_generation():
 @app.route('/power_consumption', methods=['POST'])
 @require_board_auth
 def power_consumption():
+    """Legacy JSON power consumption endpoint (deprecated, use /power_data_binary)"""
     data = request.get_json()
     board_id = data.get('board_id')
     power = data.get('power')
@@ -104,9 +160,37 @@ def power_consumption():
         "updated_by": getattr(request, 'user', {}).get('name', 'Unknown')
     })
 
+@app.route('/poll_binary/<int:board_id>', methods=['GET'])
+@require_board_auth
+def poll_binary(board_id):
+    """Optimized binary poll endpoint for ESP32"""
+    try:
+        status = game_state.get_board_status(board_id)
+        if not status:
+            return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
+        
+        # Pack response using the new protocol
+        response = BoardBinaryProtocol.pack_poll_response(
+            round_num=status.get('r', 0),
+            score=status.get('s', 0),
+            generation=status.get('g'),
+            consumption=status.get('c'),
+            round_type=status.get('rt', 'day'),
+            game_active=status.get('game_active', False),
+            expecting_data=status.get('expecting_data', False)
+        )
+        
+        return response, 200, {'Content-Type': 'application/octet-stream'}
+        
+    except BinaryProtocolError as e:
+        return b'PROTOCOL_ERROR', 500, {'Content-Type': 'application/octet-stream'}
+    except Exception as e:
+        return b'INTERNAL_ERROR', 500, {'Content-Type': 'application/octet-stream'}
+
 @app.route('/poll/<int:board_id>', methods=['GET'])
 @require_board_auth
 def poll(board_id):
+    """Legacy JSON poll endpoint (deprecated, use /poll_binary)"""
     status = game_state.get_board_status(board_id)
     if not status:
         return jsonify({"error": "Board not found"}), 404
@@ -253,58 +337,6 @@ def game_status():
             }
     
     return jsonify(base_status)
-
-@app.route('/poll_binary/<int:board_id>', methods=['GET'])
-@require_board_auth
-def poll_binary(board_id):
-    """Minimal binary response for ESP32 with limited RAM"""
-    status = game_state.get_board_status(board_id)
-    if not status:
-        return b'', 404
-    
-    # Pack data into minimal binary format
-    # Format: round(1 byte), score(2 bytes), generation(4 bytes), consumption(4 bytes), round_type(1 byte)
-    try:
-        import struct
-        round_num = min(status['r'], 255)  # Max 255 rounds
-        score = min(status['s'], 65535)    # Max score 65535
-        generation = int(status['g'] * 10) if status['g'] else 0  # 1 decimal place precision
-        consumption = int(status['c'] * 10) if status['c'] else 0  # 1 decimal place precision
-        round_type = 1 if status['rt'] == 'day' else 0
-        
-        binary_data = struct.pack('>BHIIB', round_num, score, generation, consumption, round_type)
-        return binary_data, 200, {'Content-Type': 'application/octet-stream'}
-    except Exception:
-        return b'', 500
-
-@app.route('/submit_binary', methods=['POST'])
-@require_board_auth
-def submit_binary():
-    """Accept binary data from ESP32 to save bandwidth"""
-    try:
-        import struct
-        data = request.get_data()
-        if len(data) < 13:  # Minimum expected size
-            return b'', 400
-        
-        # Format: board_id(4 bytes), generation(4 bytes), consumption(4 bytes), data_type(1 byte)
-        board_id, generation, consumption, data_type = struct.unpack('>IIIB', data[:13])
-        
-        # Convert back from integer representation
-        generation = generation / 10.0 if generation > 0 else None
-        consumption = consumption / 10.0 if consumption > 0 else None
-        
-        # Update the appropriate power value
-        if data_type == 1:  # Generation only
-            game_state.update_board_power(board_id, generation=generation)
-        elif data_type == 2:  # Consumption only
-            game_state.update_board_power(board_id, consumption=consumption)
-        else:  # Both
-            game_state.update_board_power(board_id, generation=generation, consumption=consumption)
-        
-        return b'OK', 200
-    except Exception:
-        return b'', 500
 
 @app.route('/health', methods=['GET'])
 def health_check():

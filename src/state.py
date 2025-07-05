@@ -68,7 +68,7 @@ class GameState:
         self.boards[board_id] = Board(board_id, board_name, board_type)
         return self.boards[board_id]
     
-    def update_board_power(self, board_id: int, generation: float = None, consumption: float = None, timestamp: str = None):
+    def update_board_power(self, board_id: int, generation: float = None, consumption: float = None, timestamp = None):
         if board_id not in self.boards:
             return False
         
@@ -78,7 +78,18 @@ class GameState:
         if consumption is not None:
             board.current_consumption = consumption
         if timestamp is not None:
-            board.last_update = timestamp
+            # Handle both Unix timestamps (int) and ISO string timestamps (str)
+            if isinstance(timestamp, int):
+                # Unix timestamp - convert to string for compatibility
+                import datetime
+                board.last_update = datetime.datetime.fromtimestamp(timestamp).isoformat()
+            else:
+                # String timestamp (legacy)
+                board.last_update = timestamp
+        
+        # Mark that this board has submitted data for the current round
+        if self.game_active and self.current_round > 0:
+            board.mark_data_submitted(self.current_round)
         
         return True
     
@@ -113,12 +124,20 @@ class GameState:
         board = self.boards[board_id]
         current_score = self.calculate_board_score(board_id)
         
+        # Determine if we're expecting new data for this round
+        # If the board hasn't submitted data for the current round yet, we expect it
+        expecting_data = (self.game_active and 
+                         board.last_data_round < self.current_round and
+                         self.current_round > 0)
+        
         return {
             "r": self.current_round,  # minimal field names for ESP32
             "s": board.total_score + current_score,
             "g": board.current_generation,
             "c": board.current_consumption,
-            "rt": self.get_current_round_type().value
+            "rt": self.get_current_round_type().value,
+            "expecting_data": expecting_data,  # New flag for boards
+            "game_active": self.game_active
         }
 
 class Board:
@@ -131,11 +150,17 @@ class Board:
         self.last_update: Optional[str] = None
         self.total_score = 0
         self.round_scores: List[int] = []
+        self.last_data_round = 0  # Track which round data was last submitted for
     
     def reset_score(self):
         self.total_score = 0
         self.round_scores = []
+        self.last_data_round = 0
     
     def add_round_score(self, score: int):
         self.round_scores.append(score)
         self.total_score += score
+    
+    def mark_data_submitted(self, round_number: int):
+        """Mark that data has been submitted for this round"""
+        self.last_data_round = round_number
