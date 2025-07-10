@@ -12,6 +12,7 @@ from typing import Optional, Tuple, Dict, Any
 MAX_BOARD_NAME_LENGTH = 32
 MAX_BOARD_TYPE_LENGTH = 16
 MAX_STRING_LENGTH = 64
+MAX_BUILDING_TABLE_ENTRIES = 255  # Maximum number of building types
 
 # Data type flags
 DATA_TYPE_GENERATION = 0x01
@@ -21,6 +22,12 @@ DATA_TYPE_BOTH = 0x03
 # Round type flags
 ROUND_TYPE_DAY = 0x01
 ROUND_TYPE_NIGHT = 0x00
+
+# Status flags for poll response
+STATUS_FLAG_ROUND_TYPE = 0x01  # Bit 0: Round type (0=night, 1=day)
+STATUS_FLAG_GAME_ACTIVE = 0x02  # Bit 1: Game active
+STATUS_FLAG_EXPECTING_DATA = 0x04  # Bit 2: Expecting data
+STATUS_FLAG_TABLE_UPDATED = 0x08  # Bit 3: Building table updated
 
 # Protocol version
 PROTOCOL_VERSION = 0x01
@@ -152,10 +159,11 @@ class BoardBinaryProtocol:
     @staticmethod
     def pack_poll_response(round_num: int, score: int, generation: Optional[float], 
                           consumption: Optional[float], round_type: str, 
-                          game_active: bool, expecting_data: bool, timestamp: Optional[int] = None) -> bytes:
+                          game_active: bool, expecting_data: bool, building_table_version: int,
+                          timestamp: Optional[int] = None) -> bytes:
         """
         Pack poll response for ESP32
-        Format: version(1) + timestamp(8) + round(2) + score(4) + generation(4) + consumption(4) + flags(1) = 24 bytes
+        Format: version(1) + timestamp(8) + round(2) + score(4) + generation(4) + consumption(4) + table_version(8) + flags(1) = 32 bytes
         """
         if timestamp is None:
             timestamp = int(time.time())
@@ -173,13 +181,13 @@ class BoardBinaryProtocol:
         # Pack flags: bit 0 = round_type, bit 1 = game_active, bit 2 = expecting_data
         flags = 0
         if round_type == 'day':
-            flags |= 0x01
+            flags |= STATUS_FLAG_ROUND_TYPE
         if game_active:
-            flags |= 0x02
+            flags |= STATUS_FLAG_GAME_ACTIVE
         if expecting_data:
-            flags |= 0x04
+            flags |= STATUS_FLAG_EXPECTING_DATA
         
-        return struct.pack('>BQHIiiB', PROTOCOL_VERSION, timestamp, round_num, score, gen_int, cons_int, flags)
+        return struct.pack('>BQHIiiQB', PROTOCOL_VERSION, timestamp, round_num, score, gen_int, cons_int, building_table_version, flags)
     
     @staticmethod
     def unpack_poll_response(data: bytes) -> Dict[str, Any]:
@@ -187,10 +195,10 @@ class BoardBinaryProtocol:
         Unpack poll response
         Returns: Dictionary with status information
         """
-        if len(data) < 24:
-            raise BinaryProtocolError(f"Poll response too short: {len(data)} bytes, expected 24")
+        if len(data) < 32:
+            raise BinaryProtocolError(f"Poll response too short: {len(data)} bytes, expected 32")
         
-        version, timestamp, round_num, score, gen_int, cons_int, flags = struct.unpack('>BQHIiiB', data[:24])
+        version, timestamp, round_num, score, gen_int, cons_int, building_table_version, flags = struct.unpack('>BQHIiiQB', data[:32])
         
         if version != PROTOCOL_VERSION:
             raise BinaryProtocolError(f"Unsupported protocol version: {version}")
@@ -200,9 +208,9 @@ class BoardBinaryProtocol:
         consumption = None if cons_int == 0x7FFFFFFF else cons_int / 100.0
         
         # Unpack flags
-        round_type = 'day' if (flags & 0x01) else 'night'
-        game_active = bool(flags & 0x02)
-        expecting_data = bool(flags & 0x04)
+        round_type = 'day' if (flags & STATUS_FLAG_ROUND_TYPE) else 'night'
+        game_active = bool(flags & STATUS_FLAG_GAME_ACTIVE)
+        expecting_data = bool(flags & STATUS_FLAG_EXPECTING_DATA)
         
         return {
             'timestamp': timestamp,
@@ -212,7 +220,8 @@ class BoardBinaryProtocol:
             'consumption': consumption,
             'round_type': round_type,
             'game_active': game_active,
-            'expecting_data': expecting_data
+            'expecting_data': expecting_data,
+            'building_table_version': building_table_version
         }
     
     @staticmethod
@@ -245,9 +254,139 @@ class BoardBinaryProtocol:
             raise BinaryProtocolError(f"Unsupported protocol version: {version}")
         
         if len(data) < 3 + message_length:
-            raise BinaryProtocolError("Message length mismatch")
+            raise BinaryProtocolError(f"Message length mismatch: expected {message_length}, got {len(data) - 3}")
         
         success = bool(success_byte)
-        message = data[3:3+message_length].decode('utf-8', errors='ignore')
+        message = data[3:3+message_length].decode('utf-8')
         
         return success, message
+    
+    @staticmethod
+    def pack_building_table_request(board_id: int) -> bytes:
+        """
+        Pack building table request
+        Format: version(1) + board_id(4) = 5 bytes
+        """
+        if board_id < 0 or board_id > 0xFFFFFFFF:
+            raise BinaryProtocolError("Board ID must be a 32-bit unsigned integer")
+        
+        return struct.pack('>BI', PROTOCOL_VERSION, board_id)
+    
+    @staticmethod
+    def unpack_building_table_request(data: bytes) -> int:
+        """
+        Unpack building table request
+        Returns: board_id
+        """
+        if len(data) < 5:
+            raise BinaryProtocolError(f"Building table request too short: {len(data)} bytes, expected 5")
+        
+        version, board_id = struct.unpack('>BI', data[:5])
+        
+        if version != PROTOCOL_VERSION:
+            raise BinaryProtocolError(f"Unsupported protocol version: {version}")
+        
+        return board_id
+    
+    @staticmethod
+    def pack_building_table_response(success: bool, table: Optional[Dict[int, Tuple[str, int]]]) -> bytes:
+        """
+        Pack building table response
+        Format: version(1) + success(1) + entries(1) + table(N) = 3 + N*5 bytes
+        Each entry: building_id(4) + building_type(1) = 5 bytes
+        """
+        if table is None:
+            table = {}
+        
+        if len(table) > MAX_BUILDING_TABLE_ENTRIES:
+            raise BinaryProtocolError(f"Too many building table entries: {len(table)}, max allowed: {MAX_BUILDING_TABLE_ENTRIES}")
+        
+        success_byte = 0x01 if success else 0x00
+        entries = len(table)
+        
+        # Pack table entries
+        table_data = b''.join(struct.pack('>IB', building_id, building_type) for building_id, (building_type, _) in table.items())
+        
+        return struct.pack('>BBH', PROTOCOL_VERSION, success_byte, entries) + table_data
+    
+    @staticmethod
+    def unpack_building_table_response(data: bytes) -> Tuple[bool, Dict[int, Tuple[str, int]]]:
+        """
+        Unpack building table response
+        Returns: (success, table)
+        """
+        if len(data) < 3:
+            raise BinaryProtocolError(f"Building table response too short: {len(data)} bytes, expected at least 3")
+        
+        version, success_byte, entries = struct.unpack('>BBH', data[:4])
+        
+        if version != PROTOCOL_VERSION:
+            raise BinaryProtocolError(f"Unsupported protocol version: {version}")
+        
+        success = bool(success_byte)
+        table = {}
+        
+        # Unpack each table entry
+        pos = 4
+        for _ in range(entries):
+            if len(data) < pos + 5:
+                raise BinaryProtocolError("Building table response length mismatch")
+            building_id, building_type = struct.unpack('>IB', data[pos:pos+5])
+            table[building_id] = (building_type, )
+            pos += 5
+        
+        return success, table
+    
+    @staticmethod
+    def pack_building_table(table: Dict[int, int], version: int) -> bytes:
+        """
+        Pack building consumption table for download
+        Format: version(1) + table_version(8) + entry_count(1) + entries[count](type(1) + consumption(4))
+        Maximum size: 1 + 8 + 1 + (255 * 5) = 1285 bytes
+        """
+        if not (0 <= len(table) <= MAX_BUILDING_TABLE_ENTRIES):
+            raise BinaryProtocolError(f"Too many building table entries: {len(table)}, max {MAX_BUILDING_TABLE_ENTRIES}")
+        
+        # Validate table entries
+        for building_type, consumption in table.items():
+            if not (0 <= building_type <= 255):
+                raise BinaryProtocolError(f"Building type must be uint8: {building_type}")
+            if not (-2147483648 <= consumption <= 2147483647):
+                raise BinaryProtocolError(f"Consumption must be int32: {consumption}")
+        
+        # Pack header: version + table_version + entry_count
+        data = struct.pack('>BQB', PROTOCOL_VERSION, version, len(table))
+        
+        # Pack entries: type(1) + consumption(4) for each entry
+        for building_type, consumption in sorted(table.items()):
+            data += struct.pack('>Bi', building_type, consumption)
+        
+        return data
+    
+    @staticmethod
+    def unpack_building_table(data: bytes) -> Tuple[Dict[int, int], int]:
+        """
+        Unpack building consumption table
+        Returns: (table, version)
+        """
+        if len(data) < 10:  # Minimum: version(1) + table_version(8) + entry_count(1)
+            raise BinaryProtocolError(f"Building table too short: {len(data)} bytes, expected at least 10")
+        
+        version, table_version, entry_count = struct.unpack('>BQB', data[:10])
+        
+        if version != PROTOCOL_VERSION:
+            raise BinaryProtocolError(f"Unsupported protocol version: {version}")
+        
+        expected_size = 10 + (entry_count * 5)  # Each entry is 5 bytes: type(1) + consumption(4)
+        if len(data) != expected_size:
+            raise BinaryProtocolError(f"Building table size mismatch: expected {expected_size}, got {len(data)}")
+        
+        table = {}
+        offset = 10
+        
+        for i in range(entry_count):
+            building_type, consumption = struct.unpack('>Bi', data[offset:offset+5])
+            table[building_type] = consumption
+            offset += 5
+        
+        return table, table_version

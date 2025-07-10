@@ -177,7 +177,8 @@ def poll_binary(board_id):
             consumption=status.get('c'),
             round_type=status.get('rt', 'day'),
             game_active=status.get('game_active', False),
-            expecting_data=status.get('expecting_data', False)
+            expecting_data=status.get('expecting_data', False),
+            building_table_version=game_state.get_building_table_version()
         )
         
         return response, 200, {'Content-Type': 'application/octet-stream'}
@@ -348,6 +349,76 @@ def health_check():
         "game_active": game_state.game_active,
         "current_round": game_state.current_round if game_state.game_active else None
     })
+
+@app.route('/building_table', methods=['GET'])
+@require_lecturer_auth
+def get_building_table():
+    """Get the building power consumption table for web UI"""
+    table = game_state.get_building_table()
+    version = game_state.get_building_table_version()
+    
+    return jsonify({
+        'success': True,
+        'table': table,
+        'version': version
+    })
+
+@app.route('/building_table', methods=['POST'])
+@require_lecturer_auth
+def update_building_table():
+    """Update the building power consumption table via web UI"""
+    data = request.get_json()
+    
+    if not data or 'table' not in data:
+        return jsonify({'error': 'Table data required'}), 400
+    
+    table = data['table']
+    
+    # Validate table format
+    if not isinstance(table, dict):
+        return jsonify({'error': 'Table must be a dictionary'}), 400
+    
+    # Convert keys to integers and validate values
+    try:
+        validated_table = {}
+        for building_type_str, consumption in table.items():
+            building_type = int(building_type_str)
+            if building_type < 0 or building_type > 255:
+                return jsonify({'error': f'Building type {building_type} out of range (0-255)'}), 400
+            
+            consumption_val = int(consumption)
+            if consumption_val < -2147483648 or consumption_val > 2147483647:
+                return jsonify({'error': f'Consumption value {consumption_val} out of range'}), 400
+            
+            validated_table[building_type] = consumption_val
+            
+    except ValueError as e:
+        return jsonify({'error': f'Invalid data format: {str(e)}'}), 400
+    
+    # Update the table
+    new_version = game_state.update_building_table(validated_table)
+    
+    return jsonify({
+        'success': True,
+        'message': 'Building table updated',
+        'version': new_version
+    })
+
+@app.route('/building_table_binary', methods=['GET'])
+@require_board_auth
+def get_building_table_binary():
+    """Get the building table in binary format for ESP32"""
+    try:
+        table = game_state.get_building_table()
+        version = game_state.get_building_table_version()
+        
+        binary_data = BoardBinaryProtocol.pack_building_table(table, version)
+        return binary_data, 200, {'Content-Type': 'application/octet-stream'}
+        
+    except BinaryProtocolError as e:
+        return b'PROTOCOL_ERROR', 500, {'Content-Type': 'application/octet-stream'}
+    except Exception as e:
+        return b'INTERNAL_ERROR', 500, {'Content-Type': 'application/octet-stream'}
 
 @app.route('/dashboard', methods=['GET'])
 @require_auth

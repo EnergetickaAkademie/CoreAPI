@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
+import time
 
 class RoundType(Enum):
     DAY = "day"
@@ -41,7 +42,56 @@ class GameState:
         }
         self.boards: Dict[int, Board] = {}
         self.game_active = False
+        
+        # Building consumption table: maps building type (uint8) to consumption (int32)
+        # Consumption is stored in centi-watts (watts * 100) for binary protocol compatibility
+        self.building_consumption_table: Dict[int, int] = {
+            1: 2500,   # Residential: 25.0W
+            2: 5000,   # Commercial: 50.0W
+            3: 7500,   # Industrial: 75.0W
+            4: 1500,   # Educational: 15.0W
+            5: 3000,   # Hospital: 30.0W
+            6: 1000,   # Public: 10.0W
+            7: 4000,   # Data Center: 40.0W
+            8: 2000,   # Agricultural: 20.0W
+        }
+        self.building_table_version = int(time.time())  # Unix timestamp as version
     
+    def update_building_consumption_table(self, table: Dict[int, int]) -> bool:
+        """Update the building consumption table and increment version"""
+        try:
+            # Validate table entries
+            for building_type, consumption in table.items():
+                if not (0 <= building_type <= 255):  # uint8 range
+                    return False
+                if not (-2147483648 <= consumption <= 2147483647):  # int32 range
+                    return False
+            
+            self.building_consumption_table = table.copy()
+            self.building_table_version = int(time.time())
+            return True
+        except Exception:
+            return False
+    
+    def get_building_consumption_table(self) -> Dict[int, int]:
+        """Get a copy of the building consumption table"""
+        return self.building_consumption_table.copy()
+    
+    def get_building_table_version(self) -> int:
+        """Get the current table version"""
+        return self.building_table_version
+    
+    def get_building_table(self) -> Dict[int, int]:
+        """Get a copy of the building consumption table (alias for get_building_consumption_table)"""
+        return self.get_building_consumption_table()
+    
+    def update_building_table(self, table: Dict[int, int]) -> int:
+        """Update the building consumption table and return new version"""
+        if self.update_building_consumption_table(table):
+            return self.building_table_version
+        else:
+            raise ValueError("Invalid building table data")
+
     def start_game(self):
         self.game_active = True
         self.current_round = 1
