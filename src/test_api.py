@@ -1,7 +1,8 @@
 import pytest
 import json
+import struct
 from main import app, game_state
-from state import RoundType
+from state import RoundType, PowerPlantType, ConsumerType
 
 @pytest.fixture
 def client():
@@ -252,6 +253,184 @@ def test_complete_game_flow(client, fresh_game_state):
     # Check final scores
     assert game_state.boards[1].total_score > 0
     assert game_state.boards[2].total_score > 0
+
+# Tests for new endpoints
+
+def test_production_values_endpoint(client, fresh_game_state):
+    """Test /prod_vals binary endpoint"""
+    response = client.get('/prod_vals')
+    assert response.status_code == 200
+    assert response.content_type == 'application/octet-stream'
+    
+    # Check binary format: count(1) + [id(4) + min(4) + max(4)] * count
+    data = response.data
+    assert len(data) >= 1
+    
+    count = struct.unpack('B', data[:1])[0]
+    assert count == len(PowerPlantType)
+    
+    # Verify the data structure
+    expected_length = 1 + count * 12  # 1 byte count + count * (4+4+4) bytes
+    assert len(data) == expected_length
+
+def test_consumption_values_endpoint(client, fresh_game_state):
+    """Test /cons_vals binary endpoint"""
+    response = client.get('/cons_vals')
+    assert response.status_code == 200
+    assert response.content_type == 'application/octet-stream'
+    
+    # Check binary format: count(1) + [id(4) + consumption(4)] * count
+    data = response.data
+    assert len(data) >= 1
+    
+    count = struct.unpack('B', data[:1])[0]
+    assert count == len(ConsumerType)
+    
+    # Verify the data structure
+    expected_length = 1 + count * 8  # 1 byte count + count * (4+4) bytes
+    assert len(data) == expected_length
+
+def test_post_values_endpoint(client, fresh_game_state):
+    """Test /post_vals binary endpoint"""
+    # First register a board
+    client.post('/register', json={'board_id': 1})
+    
+    # Test posting binary values
+    post_data = struct.pack('>ii', 45, 25)  # 45W production, 25W consumption
+    response = client.post('/post_vals', 
+                          data=post_data,
+                          content_type='application/octet-stream')
+    assert response.status_code == 200
+    assert response.data == b'OK'
+    
+    # Verify values were updated
+    board = game_state.boards[1]
+    assert board.current_generation == 45
+    assert board.current_consumption == 25
+
+def test_production_connected_endpoint(client, fresh_game_state):
+    """Test /prod_connected binary endpoint"""
+    # First register a board
+    client.post('/register', json={'board_id': 1})
+    
+    # Test posting connected power plants
+    power_plants_data = struct.pack('B', 2)  # 2 power plants
+    power_plants_data += struct.pack('>Ii', PowerPlantType.FVE.value, 50)  # FVE with 50W
+    power_plants_data += struct.pack('>Ii', PowerPlantType.WIND.value, 30)  # Wind with 30W
+    
+    response = client.post('/prod_connected', 
+                          data=power_plants_data,
+                          content_type='application/octet-stream')
+    assert response.status_code == 200
+    assert response.data == b'OK'
+    
+    # Verify values were updated
+    board = game_state.boards[1]
+    assert PowerPlantType.FVE.value in board.connected_power_plants
+    assert board.connected_power_plants[PowerPlantType.FVE.value] == 50
+    assert PowerPlantType.WIND.value in board.connected_power_plants
+    assert board.connected_power_plants[PowerPlantType.WIND.value] == 30
+
+def test_consumption_connected_endpoint(client, fresh_game_state):
+    """Test /cons_connected binary endpoint"""
+    # First register a board
+    client.post('/register', json={'board_id': 1})
+    
+    # Test posting connected consumers
+    consumers_data = struct.pack('B', 2)  # 2 consumers
+    consumers_data += struct.pack('>I', ConsumerType.HOUSING.value)
+    consumers_data += struct.pack('>I', ConsumerType.BAKERY.value)
+    
+    response = client.post('/cons_connected', 
+                          data=consumers_data,
+                          content_type='application/octet-stream')
+    assert response.status_code == 200
+    assert response.data == b'OK'
+    
+    # Verify values were updated
+    board = game_state.boards[1]
+    assert ConsumerType.HOUSING.value in board.connected_consumers
+    assert ConsumerType.BAKERY.value in board.connected_consumers
+
+def test_scenarios_endpoint(client, fresh_game_state):
+    """Test /scenarios endpoint"""
+    response = client.get('/scenarios')
+    assert response.status_code == 200
+    
+    data = json.loads(response.data)
+    assert data['success'] is True
+    assert 'scenarios' in data
+    assert len(data['scenarios']) > 0
+    
+    # Check scenario structure
+    scenario = data['scenarios'][0]
+    assert 'id' in scenario
+    assert 'name' in scenario
+
+def test_start_game_with_scenario(client, fresh_game_state):
+    """Test /start_game endpoint with scenario"""
+    response = client.post('/start_game', json={'scenario_id': 1})
+    assert response.status_code == 200
+    
+    data = json.loads(response.data)
+    assert data['status'] == 'success'
+    assert 'scenario_id' in data
+    assert data['scenario_id'] == 1
+    
+    # Check game state
+    assert game_state.game_active is True
+    assert game_state.current_scenario is not None
+    assert game_state.current_scenario.id == 1
+
+def test_get_pdf_endpoint(client, fresh_game_state):
+    """Test /get_pdf endpoint"""
+    # Start game with scenario first
+    client.post('/start_game', json={'scenario_id': 1})
+    
+    response = client.get('/get_pdf')
+    assert response.status_code == 200
+    
+    data = json.loads(response.data)
+    assert data['success'] is True
+    assert 'url' in data
+    assert data['url'].startswith('http')
+
+def test_get_statistics_endpoint(client, fresh_game_state):
+    """Test /get_statistics endpoint"""
+    # Register a board and start game
+    client.post('/register', json={'board_id': 1, 'board_name': 'Test Board'})
+    client.post('/start_game', json={'scenario_id': 1})
+    
+    response = client.get('/get_statistics')
+    assert response.status_code == 200
+    
+    data = json.loads(response.data)
+    assert data['success'] is True
+    assert 'statistics' in data
+    assert 'game_status' in data
+    
+    # Check statistics structure
+    stats = data['statistics'][0]
+    assert 'board_id' in stats
+    assert 'board_name' in stats
+    assert 'connected_power_plants' in stats
+    assert 'connected_consumers' in stats
+
+def test_end_game_endpoint(client, fresh_game_state):
+    """Test /end_game endpoint"""
+    # Start game first
+    client.post('/start_game', json={'scenario_id': 1})
+    assert game_state.game_active is True
+    
+    response = client.post('/end_game')
+    assert response.status_code == 200
+    
+    data = json.loads(response.data)
+    assert data['status'] == 'success'
+    
+    # Check game state
+    assert game_state.game_active is False
+    assert game_state.current_scenario is None
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

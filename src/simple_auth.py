@@ -4,9 +4,11 @@ import secrets
 import sqlite3
 import csv
 import os
+import json
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import request, jsonify
+from config_loader import config_loader
 
 # JWT Secret key (in production, this should be an environment variable)
 JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key-change-in-production')
@@ -17,7 +19,7 @@ class SimpleAuth:
     def __init__(self, db_path='users.db'):
         self.db_path = db_path
         self.init_database()
-        self.load_users_if_empty()
+        self.load_users_from_config()
     
     def init_database(self):
         """Initialize the SQLite database"""
@@ -33,12 +35,49 @@ class SimpleAuth:
                 user_type TEXT NOT NULL,
                 name TEXT NOT NULL,
                 metadata TEXT,
+                group_id TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
         conn.commit()
         conn.close()
+    
+    def load_users_from_config(self):
+        """Load users from TOML configuration"""
+        try:
+            users = config_loader.get_all_users()
+            for username, user_info in users.items():
+                # Check if user already exists
+                if not self.user_exists(username):
+                    # Add group_id to metadata
+                    metadata = user_info.get('metadata', {})
+                    group_id = metadata.get('group_id', 'group1')  # Default to group1
+                    
+                    self.create_user(
+                        username=username,
+                        password=user_info['password'],
+                        user_type=user_info['user_type'],
+                        name=user_info['name'],
+                        metadata=json.dumps(metadata),
+                        group_id=group_id
+                    )
+            print(f"✅ Loaded {len(users)} users from configuration")
+        except Exception as e:
+            print(f"⚠️ Failed to load users from config: {e}")
+            # Fallback to loading default users
+            self.load_users_if_empty()
+    
+    def user_exists(self, username):
+        """Check if user exists in database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT id FROM users WHERE username = ?', (username,))
+        result = cursor.fetchone()
+        
+        conn.close()
+        return result is not None
     
     def hash_password(self, password, salt=None):
         """Hash password with salt"""
@@ -56,7 +95,7 @@ class SimpleAuth:
         test_hash, _ = self.hash_password(password, salt)
         return test_hash == hashed_password
     
-    def create_user(self, username, password, user_type, name, metadata=None):
+    def create_user(self, username, password, user_type, name, metadata=None, group_id='group1'):
         """Create a new user"""
         hashed_password, salt = self.hash_password(password)
         
@@ -65,9 +104,9 @@ class SimpleAuth:
         
         try:
             cursor.execute('''
-                INSERT INTO users (username, password_hash, salt, user_type, name, metadata)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (username, hashed_password, salt, user_type, name, metadata))
+                INSERT INTO users (username, password_hash, salt, user_type, name, metadata, group_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (username, hashed_password, salt, user_type, name, metadata, group_id))
             
             conn.commit()
             return True
@@ -82,7 +121,7 @@ class SimpleAuth:
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT id, username, password_hash, salt, user_type, name, metadata
+            SELECT id, username, password_hash, salt, user_type, name, metadata, group_id
             FROM users WHERE username = ?
         ''', (username,))
         
@@ -91,22 +130,24 @@ class SimpleAuth:
         
         if user and self.verify_password(password, user[2], user[3]):
             return {
-                'id': user[0],
+                'user_id': user[0],  # Changed from 'id' to 'user_id' for JWT compatibility
                 'username': user[1],
                 'user_type': user[4],
                 'name': user[5],
-                'metadata': user[6]
+                'metadata': user[6],
+                'group_id': user[7] if user[7] else 'group1'  # Default to group1 if None
             }
         return None
     
     def generate_token(self, user_info):
         """Generate JWT token for user"""
         payload = {
-            'user_id': user_info['id'],
+            'user_id': user_info['user_id'],  # Changed from 'id' to 'user_id'
             'username': user_info['username'],
             'user_type': user_info['user_type'],
             'name': user_info['name'],
             'metadata': user_info['metadata'],
+            'group_id': user_info.get('group_id', 'group1'),  # Include group_id in token
             'exp': datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_HOURS),
             'iat': datetime.utcnow()
         }
