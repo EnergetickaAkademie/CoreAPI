@@ -9,6 +9,7 @@ from enak import Enak, Script
 
 from scenarios.demo import getScript
 
+
 available_scripts: Dict[str, Script] = {
     "demo": getScript()
 }
@@ -31,13 +32,16 @@ class GameState:
         """
         Registers a new board in the game state.
         """
+        print(f"Registering board: {board_id}", file=sys.stderr)
         if board_id not in self.boards:
             self.boards[board_id] = BoardState(board_id)
+            print(f"Board {board_id} registered successfully.", file=sys.stderr)
         return self.boards[board_id]
     def get_board(self, board_id: str) -> Optional['BoardState']:
         """
         Retrieves the board state by ID.
         """
+        print(f"Retrieving board: {board_id}", file=sys.stderr)
         if board_id in self.boards:
             return self.boards[board_id]
         raise KeyError(f"Board with ID {board_id} not found in game state.")

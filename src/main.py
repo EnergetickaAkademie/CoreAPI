@@ -5,12 +5,18 @@ import os
 import json
 import time
 import struct
+import logging
+import traceback
 from state import GameState, available_scripts, BoardState
 from simple_auth import require_lecturer_auth, require_board_auth, require_auth, optional_auth, auth
 from binary_protocol import BoardBinaryProtocol, BinaryProtocolError
 from enak import Enak
 
 app = Flask(__name__)
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Enable CORS for all routes
 CORS(app, origins=['http://localhost'], 
@@ -74,35 +80,6 @@ def login():
         'group_id': user_info.get('group_id', 'group1')
     })
 
-@app.route('/register_binary', methods=['POST'])
-@require_board_auth
-def register_binary():
-    """Binary board registration endpoint optimized for ESP32"""
-    try:
-        data = request.get_data()
-        board_id, board_name, board_type = BoardBinaryProtocol.unpack_registration_request(data)
-        
-        # Validate board_id
-        if board_id <= 0:
-            response = BoardBinaryProtocol.pack_registration_response(False, "Invalid board ID")
-            return response, 400, {'Content-Type': 'application/octet-stream'}
-        
-        # Get user's game state
-        user_game_state = get_user_game_state(request.user)
-        
-        # Register the board
-        user_game_state.register_board(board_id)
-        
-        response = BoardBinaryProtocol.pack_registration_response(True, "Registration successful")
-        return response, 200, {'Content-Type': 'application/octet-stream'}
-        
-    except BinaryProtocolError as e:
-        response = BoardBinaryProtocol.pack_registration_response(False, str(e))
-        return response, 400, {'Content-Type': 'application/octet-stream'}
-    except Exception as e:
-        response = BoardBinaryProtocol.pack_registration_response(False, "Internal error")
-        return response, 500, {'Content-Type': 'application/octet-stream'}
-
 @app.route('/poll_binary', methods=['GET'])
 @require_board_auth
 def poll_binary():
@@ -148,8 +125,11 @@ def poll_binary():
         return response, 200, {'Content-Type': 'application/octet-stream'}
         
     except BinaryProtocolError as e:
+        logger.error(f"Binary protocol error in poll_binary: {e}")
         return b'PROTOCOL_ERROR', 500, {'Content-Type': 'application/octet-stream'}
     except Exception as e:
+        logger.error(f"Internal error in poll_binary: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return b'INTERNAL_ERROR', 500, {'Content-Type': 'application/octet-stream'}
 
 
@@ -174,6 +154,8 @@ def get_production_values():
         return data, 200, {'Content-Type': 'application/octet-stream'}
         
     except Exception as e:
+        logger.error(f"Error in get_production_values: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return b'ERROR', 500, {'Content-Type': 'application/octet-stream'}
 
 @app.route('/cons_vals', methods=['GET'])
@@ -200,6 +182,8 @@ def get_consumption_values():
         return data, 200, {'Content-Type': 'application/octet-stream'}
         
     except Exception as e:
+        logger.error(f"Error in get_consumption_values: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return b'ERROR', 500, {'Content-Type': 'application/octet-stream'}
 
 @app.route('/post_vals', methods=['POST'])
@@ -234,8 +218,11 @@ def post_values():
         return b'OK', 200, {'Content-Type': 'application/octet-stream'}
         
     except BinaryProtocolError as e:
+        logger.error(f"Binary protocol error in post_values: {e}")
         return b'PROTOCOL_ERROR', 400, {'Content-Type': 'application/octet-stream'}
     except Exception as e:
+        logger.error(f"Error in post_values: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return b'ERROR', 500, {'Content-Type': 'application/octet-stream'}
 
 @app.route('/prod_connected', methods=['POST'])
@@ -282,6 +269,8 @@ def post_production_connected():
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
         
     except Exception as e:
+        logger.error(f"Error in post_production_connected: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return b'ERROR', 500, {'Content-Type': 'application/octet-stream'}
 
 @app.route('/cons_connected', methods=['POST'])
@@ -328,59 +317,42 @@ def post_consumption_connected():
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
         
     except Exception as e:
+        logger.error(f"Error in post_consumption_connected: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return b'ERROR', 500, {'Content-Type': 'application/octet-stream'}
 
 @app.route('/register', methods=['POST'])
 @require_board_auth
 def register():
-    """Enhanced board registration endpoint - now supports both JSON and binary"""
-    # Check if it's binary data
-    content_type = request.headers.get('Content-Type', '')
-    if 'application/octet-stream' in content_type:
-        # Handle as binary registration
-        try:
-            data = request.get_data()
-            board_id, board_name, board_type = BoardBinaryProtocol.unpack_registration_request(data)
-            
-            # Validate board_id
-            if board_id <= 0:
-                response = BoardBinaryProtocol.pack_registration_response(False, "Invalid board ID")
-                return response, 400, {'Content-Type': 'application/octet-stream'}
-            
-            # Get user's game state
-            user_game_state = get_user_game_state(request.user)
-            
-            # Register the board
-            board = user_game_state.register_board(board_id)
-            
-            response = BoardBinaryProtocol.pack_registration_response(True, "Registration successful")
-            return response, 200, {'Content-Type': 'application/octet-stream'}
-            
-        except BinaryProtocolError as e:
-            response = BoardBinaryProtocol.pack_registration_response(False, str(e))
-            return response, 400, {'Content-Type': 'application/octet-stream'}
-        except Exception as e:
-            response = BoardBinaryProtocol.pack_registration_response(False, "Internal error")
-            return response, 500, {'Content-Type': 'application/octet-stream'}
-    else:
-        # Handle as JSON registration (legacy)
-        data = request.get_json()
-        board_id = data.get('board_id')
-        board_name = data.get('board_name')
-        board_type = data.get('board_type', 'generic')
+    """Binary board registration endpoint - board ID extracted from JWT only"""
+    try:
+        # Extract board ID from JWT token, not from request data
+        user = getattr(request, 'user', {})
+        username = user.get('username', '')
         
-        if not board_id:
-            return jsonify({"error": "board_id is required"}), 400
+        # Extract board ID from username (e.g., 'board1' -> '1')
+        if username.startswith('board'):
+            board_id = username[5:]  # Remove 'board' prefix
+        else:
+            logger.error(f"Invalid board username in register: {username}")
+            response = BoardBinaryProtocol.pack_registration_response(False, "Invalid board authentication")
+            return response, 400, {'Content-Type': 'application/octet-stream'}
         
         # Get user's game state
         user_game_state = get_user_game_state(request.user)
         
-        board = user_game_state.register_board(board_id)
+        # Register the board (no need to validate board_id since it comes from verified JWT)
+        user_game_state.register_board(board_id)
         
-        return jsonify({
-            "status": "success",
-            "message": f"Board {board_id} registered successfully"
-        })
+        logger.info(f"Board {board_id} registered successfully")
+        response = BoardBinaryProtocol.pack_registration_response(True, "Registration successful")
+        return response, 200, {'Content-Type': 'application/octet-stream'}
+        
+    except Exception as e:
+        logger.error(f"Internal error in register: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        response = BoardBinaryProtocol.pack_registration_response(False, "Internal error")
+        return response, 500, {'Content-Type': 'application/octet-stream'}
 
 # Frontend/Lecturer Endpoints
 
@@ -388,9 +360,7 @@ def register():
 @require_lecturer_auth
 def get_scenarios():
     """Get list of available scenarios"""
-    # Get user's game state
-
-    scenarios = available_scripts.keys()
+    scenarios = list(available_scripts.keys())
     return jsonify({
         "success": True,
         "scenarios": scenarios
