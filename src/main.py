@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import pickle
 import os
@@ -387,8 +387,7 @@ def start_game_scenario():
     script.current_round_index = 0  # Reset script to beginning
     user_game_state.script = script
     
-    # Do one step in the script
-    script.step()
+    # DON'T automatically advance - let frontend decide when to start
     
     user = getattr(request, 'user', {})
     lecturer_name = user.get('username', 'Unknown Lecturer')
@@ -409,17 +408,29 @@ def get_pdf():
     
     script = user_game_state.get_script()
     if script:
-        pdf_url = script.getPDF()
-        if pdf_url:
+        pdf_filename = script.getPDF()
+        if pdf_filename:
             return jsonify({
                 "success": True,
-                "url": pdf_url
+                "url": f"/coreapi/download_pdf/{pdf_filename}"
             })
     
     return jsonify({
         "success": True,
-        "url": "https://example.com/default-lecture.pdf"  # Default PDF
+        "url": "/coreapi/download_pdf/presentation.pdf"  # Default PDF
     })
+
+@app.route('/download_pdf/<filename>', methods=['GET'])
+@require_lecturer_auth
+def download_pdf(filename):
+    """Download PDF file from presentations directory"""
+    import os
+    
+    presentations_dir = os.path.join(os.path.dirname(__file__), '..', 'presentations')
+    try:
+        return send_from_directory(presentations_dir, filename)
+    except FileNotFoundError:
+        return jsonify({"error": "PDF file not found"}), 404
 
 @app.route('/next_round', methods=['POST'])
 @require_lecturer_auth 
@@ -438,11 +449,40 @@ def next_round():
     # Do one step in the script
     if script.step():
         current_round = script.current_round_index
-        return jsonify({
+        round_type = script.getCurrentRoundType()
+        
+        response_data = {
             "status": "success", 
             "round": current_round, 
-            "advanced_by": lecturer_name
-        })
+            "advanced_by": lecturer_name,
+            "round_type": round_type.value if round_type else None
+        }
+        
+        # Add type-specific information
+        if round_type and round_type.value == "slides":
+            current_round_obj = script.getCurrentRound()
+            if hasattr(current_round_obj, 'startSlide') and hasattr(current_round_obj, 'endSlide'):
+                response_data["slide_range"] = {
+                    "start": current_round_obj.startSlide,
+                    "end": current_round_obj.endSlide
+                }
+        elif round_type and round_type.value in ["day", "night"]:
+            # Get current production coefficients and building consumptions
+            prod_coeffs = script.getCurrentProductionCoefficients()
+            cons_modifiers = {}
+            
+            # Get building consumptions
+            for building in Enak.Building:
+                consumption = script.getCurrentBuildingConsumption(building)
+                if consumption is not None:
+                    cons_modifiers[building.name] = consumption
+            
+            response_data["game_data"] = {
+                "production_coefficients": {str(k): v for k, v in prod_coeffs.items()},
+                "consumption_modifiers": cons_modifiers
+            }
+        
+        return jsonify(response_data)
     else:
         return jsonify({
             "status": "game_finished", 

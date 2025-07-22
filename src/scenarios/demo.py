@@ -25,7 +25,7 @@ building_consumptions = {
 def getScript():
 	script = Script(building_consumptions)
 
-	script.setPDF("prednaska.pdf")
+	script.setPDF("presentation.pdf")
 
 	#FÁZE 1 - prezentace
 	sr = SlideRange(1, 5) #starting index is 1
