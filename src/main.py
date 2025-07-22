@@ -5,10 +5,10 @@ import os
 import json
 import time
 import struct
-from state import GameState
+from state import GameState, available_scripts, BoardState
 from simple_auth import require_lecturer_auth, require_board_auth, require_auth, optional_auth, auth
 from binary_protocol import BoardBinaryProtocol, BinaryProtocolError
-from config_loader import ConfigLoader
+from enak import Enak
 
 app = Flask(__name__)
 
@@ -16,9 +16,6 @@ app = Flask(__name__)
 CORS(app, origins=['http://localhost'], 
      allow_headers=['Content-Type', 'Authorization', 'X-Auth-Token'],
      supports_credentials=True)
-
-# Initialize config loader (auth will use this automatically)
-config_loader = ConfigLoader()
 
 # Group-based game state management
 class GroupGameManager:
@@ -28,7 +25,9 @@ class GroupGameManager:
     def get_game_state(self, group_id: str) -> GameState:
         """Get or create game state for a specific group"""
         if group_id not in self.group_game_states:
-            self.group_game_states[group_id] = GameState()
+            # Initialize with demo script by default
+            demo_script = available_scripts.get("demo")
+            self.group_game_states[group_id] = GameState(demo_script)
         return self.group_game_states[group_id]
     
     def get_all_groups(self) -> list:
@@ -68,20 +67,11 @@ def login():
     
     token = auth.generate_token(user_info)
     
-    # Parse metadata if it's a JSON string
-    metadata = {}
-    if user_info['metadata']:
-        try:
-            metadata = json.loads(user_info['metadata'])
-        except:
-            metadata = {}
-    
     return jsonify({
         'token': token,
         'user_type': user_info['user_type'],
         'username': user_info['username'],
-        'name': user_info['name'],
-        'metadata': metadata
+        'group_id': user_info.get('group_id', 'group1')
     })
 
 @app.route('/register_binary', methods=['POST'])
@@ -101,7 +91,7 @@ def register_binary():
         user_game_state = get_user_game_state(request.user)
         
         # Register the board
-        board = user_game_state.register_board(board_id, board_name, board_type)
+        user_game_state.register_board(board_id)
         
         response = BoardBinaryProtocol.pack_registration_response(True, "Registration successful")
         return response, 200, {'Content-Type': 'application/octet-stream'}
@@ -113,96 +103,46 @@ def register_binary():
         response = BoardBinaryProtocol.pack_registration_response(False, "Internal error")
         return response, 500, {'Content-Type': 'application/octet-stream'}
 
-@app.route('/power_data_binary', methods=['POST'])
+@app.route('/poll_binary', methods=['GET'])
 @require_board_auth
-def power_data_binary():
-    """Binary power data submission endpoint optimized for ESP32"""
-    try:
-        data = request.get_data()
-        board_id, generation, consumption, timestamp = BoardBinaryProtocol.unpack_power_data(data)
-        
-        # Validate timestamp (within reasonable bounds)
-        current_time = int(time.time())
-        if abs(timestamp - current_time) > 86400:  # More than 1 day difference
-            return b'TIME_ERROR', 400, {'Content-Type': 'application/octet-stream'}
-        
-        # Get user's game state
-        user_game_state = get_user_game_state(request.user)
-        
-        # Update board power
-        if not user_game_state.update_board_power(board_id, generation=generation, 
-                                           consumption=consumption, timestamp=timestamp):
-            return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
-        
-        return b'OK', 200, {'Content-Type': 'application/octet-stream'}
-        
-    except BinaryProtocolError as e:
-        return b'PROTOCOL_ERROR', 400, {'Content-Type': 'application/octet-stream'}
-    except Exception as e:
-        return b'INTERNAL_ERROR', 500, {'Content-Type': 'application/octet-stream'}
-
-@app.route('/power_generation', methods=['POST'])
-@require_board_auth
-def power_generation():
-    """Legacy JSON power generation endpoint (deprecated, use /power_data_binary)"""
-    data = request.get_json()
-    board_id = data.get('board_id')
-    power = data.get('power')
-    timestamp = data.get('timestamp')
-    
-    # Get user's game state
-    user_game_state = get_user_game_state(request.user)
-    
-    if not user_game_state.update_board_power(board_id, generation=power, timestamp=timestamp):
-        return jsonify({"error": "Board not registered"}), 404
-    
-    return jsonify({
-        "status": "success",
-        "updated_by": getattr(request, 'user', {}).get('name', 'Unknown')
-    })
-
-@app.route('/power_consumption', methods=['POST'])
-@require_board_auth
-def power_consumption():
-    """Legacy JSON power consumption endpoint (deprecated, use /power_data_binary)"""
-    data = request.get_json()
-    board_id = data.get('board_id')
-    power = data.get('power')
-    timestamp = data.get('timestamp')
-    
-    # Get user's game state
-    user_game_state = get_user_game_state(request.user)
-    
-    if not user_game_state.update_board_power(board_id, consumption=power, timestamp=timestamp):
-        return jsonify({"error": "Board not registered"}), 404
-    
-    return jsonify({
-        "status": "success",
-        "updated_by": getattr(request, 'user', {}).get('name', 'Unknown')
-    })
-
-@app.route('/poll_binary/<int:board_id>', methods=['GET'])
-@require_board_auth
-def poll_binary(board_id):
+def poll_binary():
     """Optimized binary poll endpoint for ESP32"""
     try:
+        # Get board ID from authentication (from JWT username)
+        user = getattr(request, 'user', {})
+        username = user.get('username', '')
+        
+        # Extract board ID from username
+        if username.startswith('board'):
+            board_id = username[5:]  # Remove 'board' prefix
+        else:
+            return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
+        
         # Get user's game state
         user_game_state = get_user_game_state(request.user)
         
-        status = user_game_state.get_board_status(board_id)
-        if not status:
+        board = user_game_state.get_board(board_id)
+        if not board:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
         
-        # Pack response using the new protocol
-        response = BoardBinaryProtocol.pack_poll_response(
-            round_num=status.get('r', 0),
-            score=status.get('s', 0),
-            generation=status.get('g'),
-            consumption=status.get('c'),
-            round_type=status.get('rt', 'day'),
-            game_active=status.get('game_active', False),
-            expecting_data=status.get('expecting_data', False),
-            building_table_version=user_game_state.get_building_table_version()
+        script = user_game_state.get_script()
+        if not script:
+            return b'SCRIPT_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
+
+        # Get production coefficients
+        prod_coeffs = script.getCurrentProductionCoefficients()
+        
+        # Get consumption for all buildings
+        cons_coeffs = {}
+        for building in Enak.Building:
+            consumption = script.getCurrentBuildingConsumption(building)
+            if consumption is not None:
+                cons_coeffs[building] = consumption
+
+        # Pack the data using the new method
+        response = BoardBinaryProtocol.pack_coefficients_response(
+            production_coeffs=prod_coeffs,
+            consumption_coeffs=cons_coeffs
         )
         
         return response, 200, {'Content-Type': 'application/octet-stream'}
@@ -212,39 +152,25 @@ def poll_binary(board_id):
     except Exception as e:
         return b'INTERNAL_ERROR', 500, {'Content-Type': 'application/octet-stream'}
 
-@app.route('/poll/<int:board_id>', methods=['GET'])
-@require_board_auth
-def poll(board_id):
-    """Legacy JSON poll endpoint (deprecated, use /poll_binary)"""
-    # Get user's game state
-    user_game_state = get_user_game_state(request.user)
-    
-    status = user_game_state.get_board_status(board_id)
-    if not status:
-        return jsonify({"error": "Board not found"}), 404
-    
-    return jsonify(status)
 
-# New Board Endpoints for ESP32 Boards
 
 @app.route('/prod_vals', methods=['GET'])
 @require_board_auth
 def get_production_values():
-    """Binary endpoint - Get power plant production ranges"""
+    """Binary endpoint - Get power plant production ranges/coefficients"""
     try:
         # Get user's game state
         user_game_state = get_user_game_state(request.user)
         
-        ranges = user_game_state.get_power_plant_ranges()
+        script = user_game_state.get_script()
+        if not script:
+            return b'SCRIPT_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
         
-        # Pack as binary: count(1) + [id(4) + min(4) + max(4)] * count
-        data = struct.pack('B', len(ranges))  # count as uint8
+        # Get production coefficients from script
+        prod_coeffs = script.getCurrentProductionCoefficients()
         
-        for plant_id, (min_power, max_power) in ranges.items():
-            data += struct.pack('>I', plant_id)      # plant_id as uint32 big-endian
-            data += struct.pack('>i', min_power)     # min_power as int32 big-endian
-            data += struct.pack('>i', max_power)     # max_power as int32 big-endian
-            
+        # Pack using binary protocol
+        data = BoardBinaryProtocol.pack_production_values(prod_coeffs)
         return data, 200, {'Content-Type': 'application/octet-stream'}
         
     except Exception as e:
@@ -258,15 +184,19 @@ def get_consumption_values():
         # Get user's game state
         user_game_state = get_user_game_state(request.user)
         
-        consumption = user_game_state.get_consumer_consumption()
+        script = user_game_state.get_script()
+        if not script:
+            return b'SCRIPT_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
         
-        # Pack as binary: count(1) + [id(4) + consumption(4)] * count
-        data = struct.pack('B', len(consumption))  # count as uint8
+        # Get consumption for all buildings from script
+        cons_coeffs = {}
+        for building in Enak.Building:
+            consumption = script.getCurrentBuildingConsumption(building)
+            if consumption is not None:
+                cons_coeffs[building] = consumption
         
-        for consumer_id, consumption_val in consumption.items():
-            data += struct.pack('>I', consumer_id)      # consumer_id as uint32 big-endian
-            data += struct.pack('>i', consumption_val)  # consumption as int32 big-endian
-            
+        # Pack using binary protocol
+        data = BoardBinaryProtocol.pack_consumption_values(cons_coeffs)
         return data, 200, {'Content-Type': 'application/octet-stream'}
         
     except Exception as e:
@@ -278,31 +208,33 @@ def post_values():
     """Binary endpoint - Board posts current production and consumption"""
     try:
         data = request.get_data()
-        if len(data) < 8:
-            return b'INVALID_DATA', 400, {'Content-Type': 'application/octet-stream'}
         
-        # Unpack: production(4) + consumption(4)
-        production, consumption = struct.unpack('>ii', data[:8])
+        # Unpack using binary protocol
+        production, consumption = BoardBinaryProtocol.unpack_power_values(data)
         
-        # Get board ID from authentication
+        # Get board ID from authentication (from JWT username)
         user = getattr(request, 'user', {})
         username = user.get('username', '')
+        
+        # Extract board ID from username (assuming username is like 'board1', 'board2', etc.)
+        if username.startswith('board'):
+            board_id = username[5:]  # Remove 'board' prefix
+        else:
+            return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
         
         # Get user's game state
         user_game_state = get_user_game_state(request.user)
         
-        board_id = user_game_state.get_board_id_from_username(username)
-        if not board_id:
-            return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
-        
-        # Update board power
-        timestamp = int(time.time())
-        if not user_game_state.update_board_power(board_id, generation=production, 
-                                           consumption=consumption, timestamp=timestamp):
+        # Get the board and update power
+        board = user_game_state.get_board(board_id)
+        if not board:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
         
+        board.update_power(production, consumption)
         return b'OK', 200, {'Content-Type': 'application/octet-stream'}
         
+    except BinaryProtocolError as e:
+        return b'PROTOCOL_ERROR', 400, {'Content-Type': 'application/octet-stream'}
     except Exception as e:
         return b'ERROR', 500, {'Content-Type': 'application/octet-stream'}
 
@@ -328,20 +260,23 @@ def post_production_connected():
             power_plants[plant_id] = set_power
             offset += 8
         
-        # Get board ID from authentication
+        # Get board ID from authentication (from JWT username)
         user = getattr(request, 'user', {})
         username = user.get('username', '')
+        
+        # Extract board ID from username
+        if username.startswith('board'):
+            board_id = username[5:]  # Remove 'board' prefix
+        else:
+            return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
         
         # Get user's game state
         user_game_state = get_user_game_state(request.user)
         
-        board_id = user_game_state.get_board_id_from_username(username)
-        if not board_id:
-            return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
-        
         # Update board's connected power plants
-        if board_id in user_game_state.boards:
-            user_game_state.boards[board_id].set_connected_power_plants(power_plants)
+        board = user_game_state.get_board(board_id)
+        if board:
+            board.replace_connected_production([plant_id for plant_id in power_plants.keys()])
             return b'OK', 200, {'Content-Type': 'application/octet-stream'}
         else:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
@@ -371,20 +306,23 @@ def post_consumption_connected():
             consumers.append(consumer_id)
             offset += 4
         
-        # Get board ID from authentication
+        # Get board ID from authentication (from JWT username)
         user = getattr(request, 'user', {})
         username = user.get('username', '')
+        
+        # Extract board ID from username
+        if username.startswith('board'):
+            board_id = username[5:]  # Remove 'board' prefix
+        else:
+            return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
         
         # Get user's game state
         user_game_state = get_user_game_state(request.user)
         
-        board_id = user_game_state.get_board_id_from_username(username)
-        if not board_id:
-            return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
-        
         # Update board's connected consumers
-        if board_id in user_game_state.boards:
-            user_game_state.boards[board_id].set_connected_consumers(consumers)
+        board = user_game_state.get_board(board_id)
+        if board:
+            board.replace_connected_consumption(consumers)
             return b'OK', 200, {'Content-Type': 'application/octet-stream'}
         else:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
@@ -413,7 +351,7 @@ def register():
             user_game_state = get_user_game_state(request.user)
             
             # Register the board
-            board = user_game_state.register_board(board_id, board_name, board_type)
+            board = user_game_state.register_board(board_id)
             
             response = BoardBinaryProtocol.pack_registration_response(True, "Registration successful")
             return response, 200, {'Content-Type': 'application/octet-stream'}
@@ -437,12 +375,11 @@ def register():
         # Get user's game state
         user_game_state = get_user_game_state(request.user)
         
-        board = user_game_state.register_board(board_id, board_name, board_type)
+        board = user_game_state.register_board(board_id)
         
         return jsonify({
             "status": "success",
-            "message": f"Board {board_id} registered successfully",
-            "registered_by": getattr(request, 'user', {}).get('name', 'Unknown')
+            "message": f"Board {board_id} registered successfully"
         })
 
 # Frontend/Lecturer Endpoints
@@ -452,9 +389,8 @@ def register():
 def get_scenarios():
     """Get list of available scenarios"""
     # Get user's game state
-    user_game_state = get_user_game_state(request.user)
-    
-    scenarios = user_game_state.get_scenarios()
+
+    scenarios = available_scripts.keys()
     return jsonify({
         "success": True,
         "scenarios": scenarios
@@ -470,21 +406,29 @@ def start_game_scenario():
     if not scenario_id:
         return jsonify({"error": "scenario_id is required"}), 400
     
+    if scenario_id not in available_scripts:
+        return jsonify({"error": "Invalid scenario ID"}), 400
+    
     # Get user's game state
     user_game_state = get_user_game_state(request.user)
     
-    if user_game_state.start_game_with_scenario(scenario_id):
-        user = getattr(request, 'user', {})
-        lecturer_name = user.get('name', 'Unknown Lecturer')
-        
-        return jsonify({
-            "status": "success", 
-            "message": f"Game started with scenario {scenario_id}", 
-            "started_by": lecturer_name,
-            "scenario_id": scenario_id
-        })
-    else:
-        return jsonify({"error": "Invalid scenario ID"}), 400
+    # Load the selected script and reset to beginning
+    script = available_scripts[scenario_id]
+    script.current_round_index = 0  # Reset script to beginning
+    user_game_state.script = script
+    
+    # Do one step in the script
+    script.step()
+    
+    user = getattr(request, 'user', {})
+    lecturer_name = user.get('username', 'Unknown Lecturer')
+    
+    return jsonify({
+        "status": "success", 
+        "message": f"Game started with scenario {scenario_id}", 
+        "started_by": lecturer_name,
+        "scenario_id": scenario_id
+    })
 
 @app.route('/get_pdf', methods=['GET'])
 @require_lecturer_auth
@@ -493,17 +437,19 @@ def get_pdf():
     # Get user's game state
     user_game_state = get_user_game_state(request.user)
     
-    pdf_url = user_game_state.get_current_pdf_url()
-    if pdf_url:
-        return jsonify({
-            "success": True,
-            "url": pdf_url
-        })
-    else:
-        return jsonify({
-            "success": True,
-            "url": "https://example.com/default-lecture.pdf"  # Default PDF
-        })
+    script = user_game_state.get_script()
+    if script:
+        pdf_url = script.getPDF()
+        if pdf_url:
+            return jsonify({
+                "success": True,
+                "url": pdf_url
+            })
+    
+    return jsonify({
+        "success": True,
+        "url": "https://example.com/default-lecture.pdf"  # Default PDF
+    })
 
 @app.route('/next_round', methods=['POST'])
 @require_lecturer_auth 
@@ -512,18 +458,19 @@ def next_round():
     # Get user's game state
     user_game_state = get_user_game_state(request.user)
     
-    # Calculate and add scores for current round
-    for board_id in user_game_state.boards:
-        score = user_game_state.calculate_board_score(board_id)
-        user_game_state.boards[board_id].add_round_score(score)
+    script = user_game_state.get_script()
+    if not script:
+        return jsonify({"error": "No active game script"}), 400
     
     user = getattr(request, 'user', {})
-    lecturer_name = user.get('name', 'Unknown Lecturer')
+    lecturer_name = user.get('username', 'Unknown Lecturer')
     
-    if user_game_state.next_round():
+    # Do one step in the script
+    if script.step():
+        current_round = script.current_round_index
         return jsonify({
             "status": "success", 
-            "round": user_game_state.current_round, 
+            "round": current_round, 
             "advanced_by": lecturer_name
         })
     else:
@@ -540,20 +487,20 @@ def get_statistics():
     # Get user's game state
     user_game_state = get_user_game_state(request.user)
     
+    script = user_game_state.get_script()
+    
     statistics = []
     
     for board_id, board in user_game_state.boards.items():
         stats = {
             "board_id": board_id,
-            "board_name": board.name,
-            "board_type": board.board_type,
-            "current_generation": board.current_generation,
-            "current_consumption": board.current_consumption,
-            "total_score": board.total_score,
-            "round_scores": board.round_scores,
-            "connected_power_plants": board.connected_power_plants,
-            "connected_consumers": board.connected_consumers,
-            "last_update": board.last_update
+            "current_production": board.production,
+            "current_consumption": board.consumption,
+            "production_history": board.production_history,
+            "consumption_history": board.consumption_history,
+            "connected_production": board.connected_production,
+            "connected_consumption": board.connected_consumption,
+            "last_updated": board.last_updated
         }
         statistics.append(stats)
     
@@ -561,10 +508,10 @@ def get_statistics():
         "success": True,
         "statistics": statistics,
         "game_status": {
-            "current_round": user_game_state.current_round,
-            "total_rounds": user_game_state.total_rounds,
-            "game_active": user_game_state.game_active,
-            "scenario": user_game_state.current_scenario.name if user_game_state.current_scenario else None
+            "current_round": script.current_round_index if script else 0,
+            "total_rounds": len(script.rounds) if script else 0,
+            "game_active": script is not None and script.current_round_index < len(script.rounds) if script else False,
+            "scenario": script.__class__.__name__ if script else None
         }
     })
 
@@ -575,12 +522,11 @@ def end_game():
     # Get user's game state
     user_game_state = get_user_game_state(request.user)
     
-    user_game_state.game_active = False
-    user_game_state.current_scenario = None
-    user_game_state.current_scenario_round = 0
+    # Reset script to null/none
+    user_game_state.script = None
     
     user = getattr(request, 'user', {})
-    lecturer_name = user.get('name', 'Unknown Lecturer')
+    lecturer_name = user.get('username', 'Unknown Lecturer')
     
     return jsonify({
         "status": "success",
@@ -592,225 +538,103 @@ def end_game():
 @require_lecturer_auth
 def poll_for_users():
     """Endpoint for authenticated lecturers to get status of all boards"""
+    # Get user's game state
+    user_game_state = get_user_game_state(request.user)
+    script = user_game_state.get_script()
+    
     all_boards = []
     
-    for board_id in game_state.boards:
-        status = game_state.get_board_status(board_id)
-        if status:
-            all_boards.append({
-                "board_id": board_id,
-                "board_name": game_state.boards[board_id].name,
-                "board_type": game_state.boards[board_id].board_type,
-                **status
-            })
+    for board_id, board in user_game_state.boards.items():
+        all_boards.append({
+            "board_id": board_id,
+            "production": board.production,
+            "consumption": board.consumption,
+            "connected_production": board.connected_production,
+            "connected_consumption": board.connected_consumption,
+            "last_updated": board.last_updated
+        })
     
     # Parse user metadata
     user = getattr(request, 'user', {})
-    user_metadata = {}
-    if user.get('metadata'):
-        try:
-            user_metadata = json.loads(user['metadata'])
-        except:
-            user_metadata = {}
     
     return jsonify({
         "boards": all_boards,
         "game_status": {
-            "current_round": game_state.current_round,
-            "total_rounds": game_state.total_rounds,
-            "round_type": game_state.get_current_round_type().value if game_state.game_active else None,
-            "game_active": game_state.game_active
+            "current_round": script.current_round_index if script else 0,
+            "total_rounds": len(script.rounds) if script else 0,
+            "round_type": script.getCurrentRoundType().value if script and script.getCurrentRoundType() else None,
+            "game_active": script is not None and script.current_round_index < len(script.rounds) if script else False
         },
         "lecturer_info": {
             "user_id": user.get('user_id'),
-            "name": user.get('name', 'Unknown'),
-            "department": user_metadata.get('department', 'Unknown')
+            "username": user.get('username', 'Unknown')
         }
     })
-
-@app.route('/game/start', methods=['POST'])
-@require_lecturer_auth
-def start_game_legacy():
-    """Legacy game start endpoint (deprecated, use /start_game)"""
-    game_state.start_game()
-    user = getattr(request, 'user', {})
-    user_metadata = {}
-    if user.get('metadata'):
-        try:
-            user_metadata = json.loads(user['metadata'])
-        except:
-            user_metadata = {}
-    
-    lecturer_name = user.get('name', 'Unknown Lecturer')
-    return jsonify({
-        "status": "success", 
-        "message": "Game started", 
-        "started_by": lecturer_name,
-        "lecturer_department": user_metadata.get('department', 'Unknown')
-    })
-
-@app.route('/game/next_round', methods=['POST'])
-@require_lecturer_auth
-def next_round_legacy():
-    """Legacy next round endpoint (deprecated, use /next_round)"""
-    # Calculate and add scores for current round
-    for board_id in game_state.boards:
-        score = game_state.calculate_board_score(board_id)
-        game_state.boards[board_id].add_round_score(score)
-    
-    user = getattr(request, 'user', {})
-    user_metadata = {}
-    if user.get('metadata'):
-        try:
-            user_metadata = json.loads(user['metadata'])
-        except:
-            user_metadata = {}
-    
-    lecturer_name = user.get('name', 'Unknown Lecturer')
-    
-    if game_state.next_round():
-        return jsonify({
-            "status": "success", 
-            "round": game_state.current_round, 
-            "advanced_by": lecturer_name,
-            "lecturer_department": user_metadata.get('department', 'Unknown')
-        })
-    else:
-        return jsonify({
-            "status": "game_finished", 
-            "message": "All rounds completed", 
-            "finished_by": lecturer_name,
-            "lecturer_department": user_metadata.get('department', 'Unknown')
-        })
 
 @app.route('/game/status', methods=['GET'])
 @optional_auth
 def game_status():
+    # Get user's game state  
+    user_game_state = get_user_game_state(getattr(request, 'user', {'group_id': 'group1'}))
+    script = user_game_state.get_script()
+    
     base_status = {
-        "current_round": game_state.current_round,
-        "total_rounds": game_state.total_rounds,
-        "round_type": game_state.get_current_round_type().value if game_state.game_active else None,
-        "game_active": game_state.game_active,
-        "boards": len(game_state.boards)
+        "current_round": script.current_round_index if script else 0,
+        "total_rounds": len(script.rounds) if script else 0,
+        "round_type": script.getCurrentRoundType().value if script and script.getCurrentRoundType() else None,
+        "game_active": script is not None and script.current_round_index < len(script.rounds) if script else False,
+        "boards": len(user_game_state.boards)
     }
     
     # Add detailed information for authenticated users
     user = getattr(request, 'user', None)
     if user:
-        user_metadata = {}
-        if user.get('metadata'):
-            try:
-                user_metadata = json.loads(user['metadata'])
-            except:
-                user_metadata = {}
-        
         user_type = user.get('user_type')
         if user_type == 'lecturer':
-            base_status["board_details"] = [
-                {
-                    "board_id": board_id,
-                    "name": board.name,
-                    "type": board.board_type,
-                    "current_generation": board.current_generation,
-                    "current_consumption": board.current_consumption,
-                    "total_score": board.total_score
-                }
-                for board_id, board in game_state.boards.items()
-            ]
-            base_status["lecturer_info"] = {
-                "name": user.get('name', 'Unknown'),
-                "department": user_metadata.get('department', 'Unknown')
-            }
+            pass
         elif user_type == 'board':
-            # Boards get limited information
-            base_status["board_info"] = {
-                "name": user.get('name', 'Unknown'),
-                "board_type": user_metadata.get('board_type', 'Unknown'),
-                "location": user_metadata.get('location', 'Unknown')
-            }
+            pass
     
     return jsonify(base_status)
 
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint for Docker and load balancers"""
+    # Use default game state for health check
+    default_game_state = group_manager.get_game_state('group1')
+    script = default_game_state.get_script()
+    
     return jsonify({
         "status": "healthy",
         "service": "CoreAPI",
-        "boards_registered": len(game_state.boards),
-        "game_active": game_state.game_active,
-        "current_round": game_state.current_round if game_state.game_active else None
+        "boards_registered": len(default_game_state.boards),
+        "game_active": script is not None and script.current_round_index < len(script.rounds) if script else False,
+        "current_round": script.current_round_index if script else None
     })
 
 @app.route('/building_table', methods=['GET'])
 @require_lecturer_auth
 def get_building_table():
-    """Get the building power consumption table for web UI"""
-    table = game_state.get_building_table()
-    version = game_state.get_building_table_version()
+    """Get the building power consumption table from script"""
+    # Get user's game state
+    user_game_state = get_user_game_state(request.user)
+    
+    script = user_game_state.get_script()
+    if not script:
+        return jsonify({'error': 'No active script'}), 400
+    
+    # Get building consumptions from script
+    table = {}
+    for building in Enak.Building:
+        consumption = script.getCurrentBuildingConsumption(building)
+        if consumption is not None:
+            table[building.value] = consumption
     
     return jsonify({
         'success': True,
         'table': table,
-        'version': version
+        'version': 1  # Static version since it comes from script
     })
-
-@app.route('/building_table', methods=['POST'])
-@require_lecturer_auth
-def update_building_table():
-    """Update the building power consumption table via web UI"""
-    data = request.get_json()
-    
-    if not data or 'table' not in data:
-        return jsonify({'error': 'Table data required'}), 400
-    
-    table = data['table']
-    
-    # Validate table format
-    if not isinstance(table, dict):
-        return jsonify({'error': 'Table must be a dictionary'}), 400
-    
-    # Convert keys to integers and validate values
-    try:
-        validated_table = {}
-        for building_type_str, consumption in table.items():
-            building_type = int(building_type_str)
-            if building_type < 0 or building_type > 255:
-                return jsonify({'error': f'Building type {building_type} out of range (0-255)'}), 400
-            
-            consumption_val = int(consumption)
-            if consumption_val < -2147483648 or consumption_val > 2147483647:
-                return jsonify({'error': f'Consumption value {consumption_val} out of range'}), 400
-            
-            validated_table[building_type] = consumption_val
-            
-    except ValueError as e:
-        return jsonify({'error': f'Invalid data format: {str(e)}'}), 400
-    
-    # Update the table
-    new_version = game_state.update_building_table(validated_table)
-    
-    return jsonify({
-        'success': True,
-        'message': 'Building table updated',
-        'version': new_version
-    })
-
-@app.route('/building_table_binary', methods=['GET'])
-@require_board_auth
-def get_building_table_binary():
-    """Get the building table in binary format for ESP32"""
-    try:
-        table = game_state.get_building_table()
-        version = game_state.get_building_table_version()
-        
-        binary_data = BoardBinaryProtocol.pack_building_table(table, version)
-        return binary_data, 200, {'Content-Type': 'application/octet-stream'}
-        
-    except BinaryProtocolError as e:
-        return b'PROTOCOL_ERROR', 500, {'Content-Type': 'application/octet-stream'}
-    except Exception as e:
-        return b'INTERNAL_ERROR', 500, {'Content-Type': 'application/octet-stream'}
 
 @app.route('/dashboard', methods=['GET'])
 @require_auth
@@ -818,23 +642,13 @@ def dashboard():
     """Get user profile information for the dashboard"""
     user_info = request.user
     
-    # Parse metadata if it's a JSON string
-    metadata = {}
-    if user_info.get('metadata'):
-        try:
-            metadata = json.loads(user_info['metadata'])
-        except:
-            metadata = {}
-    
     return jsonify({
         'success': True,
         'user': {
             'id': user_info['user_id'],  # JWT payload uses 'user_id' not 'id'
             'username': user_info['username'],
-            'name': user_info['name'],
             'user_type': user_info['user_type'],
-            'metadata': metadata,
-            'group_id': user_info.get('group_id', 'group1')  # Include group_id
+            'group_id': user_info.get('group_id', 'group1')
         }
     })
 

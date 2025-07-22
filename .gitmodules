@@ -1,0 +1,3 @@
+[submodule "src/enak"]
+	path = src/enak
+	url = git@github.com:EnergetickaAkademie/scenarios.git

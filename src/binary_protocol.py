@@ -390,3 +390,97 @@ class BoardBinaryProtocol:
             offset += 5
         
         return table, table_version
+
+    @staticmethod
+    def pack_coefficients_response(production_coeffs: Dict, consumption_coeffs: Dict) -> bytes:
+        """
+        Pack production and consumption coefficients for poll response
+        Format: version(1) + prod_count(1) + [source_id(1) + coefficient(4)] * prod_count + 
+                cons_count(1) + [building_id(1) + consumption(4)] * cons_count
+        """
+        data = struct.pack('B', PROTOCOL_VERSION)
+        
+        # Pack production coefficients
+        prod_count = len(production_coeffs)
+        if prod_count > 255:
+            raise BinaryProtocolError(f"Too many production coefficients: {prod_count}, max 255")
+        
+        data += struct.pack('B', prod_count)
+        for source, coefficient in production_coeffs.items():
+            # Convert enum to its value (int)
+            source_id = source.value if hasattr(source, 'value') else int(source)
+            if not (0 <= source_id <= 255):
+                raise BinaryProtocolError(f"Source ID must be uint8: {source_id}")
+            # Convert coefficient to fixed point (coefficient * 1000 for 3 decimal precision)
+            coeff_int = int(coefficient * 1000)
+            if not (-2147483648 <= coeff_int <= 2147483647):
+                raise BinaryProtocolError(f"Coefficient value too large: {coefficient}")
+            data += struct.pack('>Bi', source_id, coeff_int)
+        
+        # Pack consumption coefficients
+        cons_count = len(consumption_coeffs)
+        if cons_count > 255:
+            raise BinaryProtocolError(f"Too many consumption coefficients: {cons_count}, max 255")
+        
+        data += struct.pack('B', cons_count)
+        for building, consumption in consumption_coeffs.items():
+            # Convert enum to its value (int)
+            building_id = building.value if hasattr(building, 'value') else int(building)
+            if not (0 <= building_id <= 255):
+                raise BinaryProtocolError(f"Building ID must be uint8: {building_id}")
+            # Convert consumption to fixed point (consumption * 100 for 2 decimal precision)
+            cons_int = int(consumption * 100) if consumption is not None else 0
+            if not (-2147483648 <= cons_int <= 2147483647):
+                raise BinaryProtocolError(f"Consumption value too large: {consumption}")
+            data += struct.pack('>Bi', building_id, cons_int)
+        
+        return data
+
+    @staticmethod
+    def pack_production_values(prod_coeffs: Dict) -> bytes:
+        """
+        Pack production coefficients/values for binary transmission
+        Format: version(1) + count(1) + [source_id(4) + coefficient(4)] * count
+        """
+        data = struct.pack('B', PROTOCOL_VERSION)
+        data += struct.pack('B', len(prod_coeffs))  # count as uint8
+        
+        for source, coefficient in prod_coeffs.items():
+            # Convert enum to its value (int)
+            source_id = source.value if hasattr(source, 'value') else int(source)
+            # Convert coefficient to fixed point (coefficient * 1000 for 3 decimal precision)
+            coeff_int = int(coefficient * 1000)
+            data += struct.pack('>Ii', source_id, coeff_int)  # source_id as uint32, coefficient as int32
+            
+        return data
+
+    @staticmethod
+    def pack_consumption_values(cons_coeffs: Dict) -> bytes:
+        """
+        Pack consumption coefficients/values for binary transmission
+        Format: version(1) + count(1) + [building_id(4) + consumption(4)] * count
+        """
+        data = struct.pack('B', PROTOCOL_VERSION)
+        data += struct.pack('B', len(cons_coeffs))  # count as uint8
+        
+        for building, consumption_val in cons_coeffs.items():
+            # Convert enum to its value (int)
+            building_id = building.value if hasattr(building, 'value') else int(building)
+            # Convert consumption to fixed point (consumption * 100 for 2 decimal precision)
+            cons_int = int(consumption_val * 100)
+            data += struct.pack('>Ii', building_id, cons_int)  # building_id as uint32, consumption as int32
+            
+        return data
+
+    @staticmethod
+    def unpack_power_values(data: bytes) -> Tuple[int, int]:
+        """
+        Unpack power values (production and consumption) from binary data
+        Format: production(4) + consumption(4)
+        Returns: (production, consumption)
+        """
+        if len(data) < 8:
+            raise BinaryProtocolError(f"Power values data too short: {len(data)} bytes, expected 8")
+        
+        production, consumption = struct.unpack('>ii', data[:8])
+        return production, consumption
