@@ -11,6 +11,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code
 COPY src/ .
 
+# Copy presentations directory
+COPY presentations/ ./presentations/
+
 # Expose the port
 EXPOSE 5000
 

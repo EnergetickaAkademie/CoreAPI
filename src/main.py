@@ -31,9 +31,8 @@ class GroupGameManager:
     def get_game_state(self, group_id: str) -> GameState:
         """Get or create game state for a specific group"""
         if group_id not in self.group_game_states:
-            # Initialize with demo script by default
-            demo_script = available_scripts.get("demo")
-            self.group_game_states[group_id] = GameState(demo_script)
+            # Initialize with NO script - game is inactive by default
+            self.group_game_states[group_id] = GameState(None)
         return self.group_game_states[group_id]
     
     def get_all_groups(self) -> list:
@@ -104,7 +103,12 @@ def poll_binary():
         
         script = user_game_state.get_script()
         if not script:
-            return b'SCRIPT_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
+            # Return empty response when no game is active
+            response = BoardBinaryProtocol.pack_coefficients_response(
+                production_coeffs={},
+                consumption_coeffs={}
+            )
+            return response, 200, {'Content-Type': 'application/octet-stream'}
 
         # Get production coefficients
         prod_coeffs = script.getCurrentProductionCoefficients()
@@ -382,9 +386,12 @@ def start_game_scenario():
     # Get user's game state
     user_game_state = get_user_game_state(request.user)
     
-    # Load the selected script and reset to beginning
+    # Load the selected script and reset completely
     script = available_scripts[scenario_id]
-    script.current_round_index = 0  # Reset script to beginning
+    # script.current_round_index = 0  # Reset script to beginning
+    
+    
+    # Set the script
     user_game_state.script = script
     
     # DON'T automatically advance - let frontend decide when to start
@@ -421,12 +428,13 @@ def get_pdf():
     })
 
 @app.route('/download_pdf/<filename>', methods=['GET'])
-@require_lecturer_auth
+@optional_auth  # Changed from require_lecturer_auth to allow iframe access
 def download_pdf(filename):
     """Download PDF file from presentations directory"""
     import os
     
-    presentations_dir = os.path.join(os.path.dirname(__file__), '..', 'presentations')
+    # In Docker, presentations directory is at ./presentations/
+    presentations_dir = os.path.join(os.path.dirname(__file__), 'presentations')
     try:
         return send_from_directory(presentations_dir, filename)
     except FileNotFoundError:
@@ -459,14 +467,14 @@ def next_round():
         }
         
         # Add type-specific information
-        if round_type and round_type.value == "slides":
+        if round_type and round_type == Enak.RoundType.SLIDE:
             current_round_obj = script.getCurrentRound()
             if hasattr(current_round_obj, 'startSlide') and hasattr(current_round_obj, 'endSlide'):
                 response_data["slide_range"] = {
                     "start": current_round_obj.startSlide,
                     "end": current_round_obj.endSlide
                 }
-        elif round_type and round_type.value in ["day", "night"]:
+        elif round_type and round_type in [Enak.RoundType.DAY, Enak.RoundType.NIGHT]:
             # Get current production coefficients and building consumptions
             prod_coeffs = script.getCurrentProductionCoefficients()
             cons_modifiers = {}
@@ -520,7 +528,7 @@ def get_statistics():
         "game_status": {
             "current_round": script.current_round_index if script else 0,
             "total_rounds": len(script.rounds) if script else 0,
-            "game_active": script is not None and script.current_round_index < len(script.rounds) if script else False,
+            "game_active": script is not None and script.current_round_index < len(script.rounds),
             "scenario": script.__class__.__name__ if script else None
         }
     })
