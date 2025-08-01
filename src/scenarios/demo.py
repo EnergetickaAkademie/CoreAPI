@@ -22,23 +22,39 @@ building_consumptions = {
 	Building.SCHOOL: (80, 30)
 }
 
-def getScript():
-	script = Script(building_consumptions)
+source_productions = {
+	#these numbers define the minimum and maximum
+	Source.COAL: (250, 500),
+	Source.HYDRO: (0, 100),
+	Source.HYDRO_STORAGE: (-200, 200),
+	Source.GAS: (0, 500),
+	Source.NUCLEAR: (900, 1000),
+	Source.WIND: (0, 100),
+	Source.PHOTOVOLTAIC: (0, 100),
+	Source.BATTERY: (-200, 200)
+}
 
-	script.setPDF("presentation.pdf")
+def getScript():
+	script = Script(building_consumptions, source_productions)
+
+	script.setPDF("prednaska.pdf")
+
+	script.setVerbose(True)
 
 	#FÁZE 1 - prezentace
-	sr = SlideRange(1, 5) #starting index is 1
+	sr = SlideRange(1, 5)
 	script.addRound(sr)
-	#same for the other teams
 
 	#FÁZE 2 - umístění dvou uhelek a jedné budovy, jednoduché vyrovnání soustavy
 	script.allowProduction(Source.COAL)
 
-	d = Day()
+	d = (Day()
+		.comment("Uhelky")
+		.infoFile("/info/uhelky.md")
+		.build())
 	script.addRound(d)
 
-	n = Night()
+	n = Night().setCoefficient(Source.HYDRO, 1.0).build()
 	script.addRound(n)
 
 	#FÁZE 3 - spotřeba města roste o 60MW ve dne, o 120MW v noci
@@ -46,30 +62,30 @@ def getScript():
 	script.allowProduction(Source.HYDRO)
 	script.allowProduction(Source.HYDRO_STORAGE)
 
-	d = Day()
+	d = Day().build()
 	script.addRound(d)
 
-	n = Night()
+	n = Night().build()
 	script.addRound(n)
 
 	#FÁZE 4 - jaderky, spotřeba roste o 100MW
 	script.allowProduction(Source.NUCLEAR)
 	script.changeBuildingsConsumptions(CITY_CENTERS, (100, 100))
 
-	d = Day()
+	d = Day().build()
 	script.addRound(d)
 
-	n = Night()
+	n = Night().build()
 	script.addRound(n)
 
 	#FÁZE 5 - spotřeba města roste o 100MW, plynové elektrárny
 	script.changeBuildingsConsumptions(CITY_CENTERS, (100, 100))
 	script.allowProduction(Source.GAS)
 	
-	d = Day()
+	d = Day().build()
 	script.addRound(d)
 
-	n = Night()
+	n = Night().build()
 	script.addRound(n)
 
 	#FÁZE 6 - spotřeba města roste o 200 MW, nový typ OZE
@@ -78,25 +94,48 @@ def getScript():
 	script.allowProduction(Source.PHOTOVOLTAIC)
 
 	#normal calm day (average wind, average sun)
-	d = Day()
+	d = Day().sunny().breezy().build()
 	script.addRound(d)
 
-	n = Night()
+	n = Night().breezy().build()
 	script.addRound(n)
 
 	#FÁZE 7 - scénáře
 
-	d = Windy(Sunny(Day()))
+	# Je zima, zataženo, sněží a je bezvětří.
+	d = (Day()
+		.snowy()
+		.calm()
+		.cloudy()
+		.build())
 	script.addRound(d)
 
-	n = Windy(Night())
+	n = (Night()
+		.snowy()
+		.calm()
+		.cloudy()
+		.build())
 	script.addRound(n)
 
-	# d = Sunny(Windy(Day("Koná se mistrovství světa v ledním hokeji")))
-	# d.outage(Source.GAS) #there is a gas outage in this round
-	# d.addBuildingModifier(Building.STADIUM, 100)  #increase stadium consumption because of a specific event
-	# script.addRound(d)
+	# MS v hokeji, více lidí ve městě, porucha plynové elektrárny
+	d = (Day()
+		.sunny()
+		.windy()
+		.outage(Source.GAS)
+		.addBuildingModifier(Building.STADIUM, 50)
+		.addBuildingModifiers(CITY_CENTERS, 600)
+		.comment("MS v hokeji")
+		.build())
+	script.addRound(d)
 
+	n = (Night()
+		.windy()
+		.outage(Source.GAS)
+		.addBuildingModifier(Building.STADIUM, 100)
+		.addBuildingModifiers(CITY_CENTERS, 450)
+		.build())
+	script.addRound(n)
+	
 	return script
 
 if __name__ == "__main__":

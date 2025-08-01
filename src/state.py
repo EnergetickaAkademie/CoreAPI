@@ -42,6 +42,7 @@ class GameState:
         Retrieves the board state by ID.
         """
         print(f"Retrieving board: {board_id}", file=sys.stderr)
+        print(self.boards, file=sys.stderr)
         if board_id in self.boards:
             return self.boards[board_id]
         raise KeyError(f"Board with ID {board_id} not found in game state.")

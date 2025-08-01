@@ -4,6 +4,7 @@ import pickle
 import os
 import json
 import time
+import sys
 import struct
 import logging
 import traceback
@@ -54,15 +55,24 @@ game_state = group_manager.get_game_state('group1')
 @app.route('/login', methods=['POST'])
 def login():
     """Login endpoint for both lecturers and boards"""
+    print("Request data for login:", file=sys.stderr)
+    # extract raw string data
+    print(f"Request data: {request.data}", file=sys.stderr)
+    print("endpoint: /login", file=sys.stderr)
+
     data = request.get_json()
-    
-    if not data:
-        return jsonify({'error': 'JSON data required'}), 400
     
     username = data.get('username')
     password = data.get('password')
+    logger.info(f"Login attempt for user: {username}")
+    logger.info(f"User password: {password}")  # For debugging purposes, remove in production
+    print(f"User password: {password}", file=sys.stderr)  # For debugging purposes, remove in production   
+    print(f"Login attempt for user: {username}", file=sys.stderr)
+    if not data:
+        return jsonify({'error': 'JSON data required'}), 400
     
     if not username or not password:
+        logger.error("Username or password not provided")
         return jsonify({'error': 'Username and password required'}), 400
     
     user_info = auth.authenticate_user(username, password)
@@ -672,4 +682,4 @@ def dashboard():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(debug=False, host="0.0.0.0", port=port)
+    app.run(debug=True, host="0.0.0.0", port=port)
