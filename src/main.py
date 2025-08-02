@@ -209,7 +209,7 @@ def post_values():
         
         # Unpack using binary protocol
         production, consumption = BoardBinaryProtocol.unpack_power_values(data)
-        
+        print(f"Received production: {production}, consumption: {consumption}", file=sys.stderr)
         # Get board ID from authentication (from JWT username)
         user = getattr(request, 'user', {})
         username = user.get('username', '')
