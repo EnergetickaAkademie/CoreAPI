@@ -151,7 +151,7 @@ def poll_binary():
 @app.route('/prod_vals', methods=['GET'])
 @require_board_auth
 def get_production_values():
-    """Binary endpoint - Get power plant production ranges/coefficients"""
+    """Binary endpoint - Get power plant production ranges"""
     try:
         # Get user's game state
         user_game_state = get_user_game_state(request.user)
@@ -160,11 +160,18 @@ def get_production_values():
         if not script:
             return b'SCRIPT_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
         
-        # Get production coefficients from script
-        prod_coeffs = script.getCurrentProductionCoefficients()
+        # Get production ranges from script (includes coefficients applied)
+        from enak.Enak import Source
+        prod_ranges = {}
+        
+        # Get all available sources and their current production ranges
+        for source in Source:
+            range_values = script.getCurrentProductionRange(source)
+            if range_values and range_values != (0.0, 0.0):
+                prod_ranges[source] = range_values
         
         # Pack using binary protocol
-        data = BoardBinaryProtocol.pack_production_values(prod_coeffs)
+        data = BoardBinaryProtocol.pack_production_ranges(prod_ranges)
         return data, 200, {'Content-Type': 'application/octet-stream'}
         
     except Exception as e:

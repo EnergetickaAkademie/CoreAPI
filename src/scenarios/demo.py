@@ -37,13 +37,14 @@ source_productions = {
 def getScript():
 	script = Script(building_consumptions, source_productions)
 
-	script.setPDF("prednaska.pdf")
-
 	script.setVerbose(True)
 
 	#FÁZE 1 - prezentace
-	sr = SlideRange(1, 5)
+	sr = SlideRange(["scenare/intro1.md", "scenare/intro2.md", "scenare/intro3.md"])
 	script.addRound(sr)
+
+	sl = Slide("scenare/faze2.md")
+	script.addRound(sl)
 
 	#FÁZE 2 - umístění dvou uhelek a jedné budovy, jednoduché vyrovnání soustavy
 	script.allowProduction(Source.COAL)
@@ -54,8 +55,11 @@ def getScript():
 		.build())
 	script.addRound(d)
 
-	n = Night().setCoefficient(Source.HYDRO, 1.0).build()
+	n = Night().build()
 	script.addRound(n)
+
+	sl = Slide("scenare/faze3.md")
+	script.addRound(sl)
 
 	#FÁZE 3 - spotřeba města roste o 60MW ve dne, o 120MW v noci
 	script.changeBuildingsConsumptions(CITY_CENTERS, (60, 120))
@@ -68,6 +72,9 @@ def getScript():
 	n = Night().build()
 	script.addRound(n)
 
+	sl = Slide("scenare/faze4.md")
+	script.addRound(sl)
+
 	#FÁZE 4 - jaderky, spotřeba roste o 100MW
 	script.allowProduction(Source.NUCLEAR)
 	script.changeBuildingsConsumptions(CITY_CENTERS, (100, 100))
@@ -78,6 +85,9 @@ def getScript():
 	n = Night().build()
 	script.addRound(n)
 
+	sl = Slide("scenare/faze5.md")
+	script.addRound(sl)
+
 	#FÁZE 5 - spotřeba města roste o 100MW, plynové elektrárny
 	script.changeBuildingsConsumptions(CITY_CENTERS, (100, 100))
 	script.allowProduction(Source.GAS)
@@ -87,6 +97,9 @@ def getScript():
 
 	n = Night().build()
 	script.addRound(n)
+
+	sl = Slide("scenare/faze6.md")
+	script.addRound(sl)
 
 	#FÁZE 6 - spotřeba města roste o 200 MW, nový typ OZE
 	script.changeBuildingsConsumptions(CITY_CENTERS, (200, 200))
@@ -100,6 +113,8 @@ def getScript():
 	n = Night().breezy().build()
 	script.addRound(n)
 
+	sl = Slide("scenare/faze7.md")
+	script.addRound(sl)
 	#FÁZE 7 - scénáře
 
 	# Je zima, zataženo, sněží a je bezvětří.
@@ -116,6 +131,9 @@ def getScript():
 		.cloudy()
 		.build())
 	script.addRound(n)
+
+	sl = Slide("scenare/faze8.md")
+	script.addRound(sl)
 
 	# MS v hokeji, více lidí ve městě, porucha plynové elektrárny
 	d = (Day()

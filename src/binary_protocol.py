@@ -133,6 +133,24 @@ class BoardBinaryProtocol:
         return data
     
     @staticmethod
+    def pack_production_ranges(prod_ranges: Dict) -> bytes:
+        """
+        Pack production range values (min, max) for power plants
+        Format: count(1) + [source_id(1) + min_power(4) + max_power(4)]*
+        """
+        data = b''
+        count = len(prod_ranges)
+        data += struct.pack('B', count)
+        
+        for source, (min_power, max_power) in prod_ranges.items():
+            source_id = source.value if hasattr(source, 'value') else int(source)
+            min_power_mw = int(min_power * 1000)  # Convert to mW
+            max_power_mw = int(max_power * 1000)  # Convert to mW
+            data += struct.pack('>Bii', source_id, min_power_mw, max_power_mw)
+        
+        return data
+    
+    @staticmethod
     def pack_consumption_values(cons_coeffs: Dict) -> bytes:
         """
         Pack consumption coefficient values
