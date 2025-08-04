@@ -169,6 +169,7 @@ def get_production_values():
             range_values = script.getCurrentProductionRange(source)
             if range_values and range_values != (0.0, 0.0):
                 prod_ranges[source] = range_values
+        print(f"Production ranges: {prod_ranges}", file=sys.stderr)
         
         # Pack using binary protocol
         data = BoardBinaryProtocol.pack_production_ranges(prod_ranges)
