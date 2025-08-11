@@ -65,6 +65,7 @@ def getScript():
 	script.changeBuildingsConsumptions(CITY_CENTERS, (60, 120))
 	script.allowProduction(Source.HYDRO)
 	script.allowProduction(Source.HYDRO_STORAGE)
+	script.allowProduction(Source.BATTERY)
 
 	d = Day().build()
 	script.addRound(d)
