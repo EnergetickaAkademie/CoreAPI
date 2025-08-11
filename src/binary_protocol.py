@@ -92,16 +92,17 @@ class BoardBinaryProtocol:
         """
         Pack production and consumption coefficients
         Format: prod_count(1) + [source_id(1) + coeff(4)]* + cons_count(1) + [building_id(1) + consumption(4)]*
+        Uses signed integers for production to support negative values (e.g., battery charging)
         """
         data = b''
         
-        # Pack production coefficients
+        # Pack production coefficients (using signed integers)
         prod_count = len(production_coeffs)
         data += struct.pack('B', prod_count)
         
         for source, coeff in production_coeffs.items():
             source_id = source.value if hasattr(source, 'value') else int(source)
-            coeff_int = int(coeff * 1000)  # Convert to mW
+            coeff_int = int(coeff * 1000)  # Convert to mW (signed)
             data += struct.pack('>Bi', source_id, coeff_int)
         
         # Pack consumption coefficients  
@@ -120,6 +121,7 @@ class BoardBinaryProtocol:
         """
         Pack production coefficient values
         Format: count(1) + [source_id(1) + coeff(4)]*
+        Uses signed integers to support negative coefficients (e.g., battery charging)
         """
         data = b''
         count = len(prod_coeffs)
@@ -127,7 +129,7 @@ class BoardBinaryProtocol:
         
         for source, coeff in prod_coeffs.items():
             source_id = source.value if hasattr(source, 'value') else int(source)
-            coeff_int = int(coeff * 1000)  # Convert to mW
+            coeff_int = int(coeff * 1000)  # Convert to mW (signed)
             data += struct.pack('>Bi', source_id, coeff_int)
         
         return data
@@ -137,6 +139,7 @@ class BoardBinaryProtocol:
         """
         Pack production range values (min, max) for power plants
         Format: count(1) + [source_id(1) + min_power(4) + max_power(4)]*
+        Uses signed integers to support negative values (e.g., battery charging)
         """
         data = b''
         count = len(prod_ranges)
@@ -144,8 +147,8 @@ class BoardBinaryProtocol:
         
         for source, (min_power, max_power) in prod_ranges.items():
             source_id = source.value if hasattr(source, 'value') else int(source)
-            min_power_mw = int(min_power * 1000)  # Convert to mW
-            max_power_mw = int(max_power * 1000)  # Convert to mW
+            min_power_mw = int(min_power * 1000)  # Convert to mW (signed)
+            max_power_mw = int(max_power * 1000)  # Convert to mW (signed)
             data += struct.pack('>Bii', source_id, min_power_mw, max_power_mw)
         
         return data
