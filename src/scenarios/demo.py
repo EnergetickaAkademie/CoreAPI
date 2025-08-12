@@ -51,7 +51,6 @@ def getScript():
 
 	d = (Day()
 		.comment("Uhelky")
-		.infoFile("/info/uhelky.md")
 		.build())
 	script.addRound(d)
 
