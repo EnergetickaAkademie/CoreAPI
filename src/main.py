@@ -46,7 +46,11 @@ group_manager = GroupGameManager()
 # Helper function to get game state for current user
 def get_user_game_state(user_info: dict) -> GameState:
     """Get the game state for the user's group"""
-    group_id = user_info.get('group_id', 'group1')
+    if user_info is None:
+        # Default to group1 for unauthenticated requests
+        group_id = 'group1'
+    else:
+        group_id = user_info.get('group_id', 'group1')
     return group_manager.get_game_state(group_id)
 
 # Game state (backwards compatibility - will use group1 by default)
@@ -426,39 +430,36 @@ def start_game_scenario():
         "scenario_id": scenario_id
     })
 
-@app.route('/get_pdf', methods=['GET'])
-@require_lecturer_auth
-def get_pdf():
-    """Get PDF URL for current scenario"""
-    # Get user's game state
-    user_game_state = get_user_game_state(request.user)
-    
-    script = user_game_state.get_script()
-    if script:
-        pdf_filename = script.getPDF()
-        if pdf_filename:
-            return jsonify({
-                "success": True,
-                "url": f"/coreapi/download_pdf/{pdf_filename}"
-            })
-    
-    return jsonify({
-        "success": True,
-        "url": "/coreapi/download_pdf/presentation.pdf"  # Default PDF
-    })
-
-@app.route('/download_pdf/<filename>', methods=['GET'])
-@optional_auth  # Changed from require_lecturer_auth to allow iframe access
-def download_pdf(filename):
-    """Download PDF file from presentations directory"""
+@app.route('/slide_file/<path:filename>', methods=['GET'])
+@optional_auth  # Allow access for slide images
+def get_slide_file(filename):
+    """Get slide image by filename path"""
     import os
     
-    # In Docker, presentations directory is at ./presentations/
+    # Get presentations directory
     presentations_dir = os.path.join(os.path.dirname(__file__), 'presentations')
-    try:
-        return send_from_directory(presentations_dir, filename)
-    except FileNotFoundError:
-        return jsonify({"error": "PDF file not found"}), 404
+    
+    # Construct full path
+    filepath = os.path.join(presentations_dir, filename)
+    
+    # Security check: ensure the path is within presentations directory
+    real_presentations_dir = os.path.realpath(presentations_dir)
+    real_filepath = os.path.realpath(filepath)
+    
+    if not real_filepath.startswith(real_presentations_dir):
+        return jsonify({"error": "Invalid file path"}), 403
+    
+    # Check if file exists
+    if os.path.exists(real_filepath):
+        try:
+            # Extract directory and filename
+            file_dir = os.path.dirname(real_filepath)
+            file_name = os.path.basename(real_filepath)
+            return send_from_directory(file_dir, file_name)
+        except FileNotFoundError:
+            return jsonify({"error": f"File {filename} not found"}), 404
+    
+    return jsonify({"error": f"File {filename} not found"}), 404
 
 @app.route('/next_round', methods=['POST'])
 @require_lecturer_auth 
@@ -493,11 +494,32 @@ def next_round():
         # Add type-specific information
         if round_type and round_type == Enak.RoundType.SLIDE:
             current_round_obj = script.getCurrentRound()
-            if hasattr(current_round_obj, 'startSlide') and hasattr(current_round_obj, 'endSlide'):
-                response_data["slide_range"] = {
-                    "start": current_round_obj.startSlide,
-                    "end": current_round_obj.endSlide
-                }
+            if hasattr(current_round_obj, 'getSlide'):
+                response_data["slide"] = current_round_obj.getSlide()
+        elif round_type and round_type == Enak.RoundType.SLIDE_RANGE:
+            slides = script.getCurrentSlides()
+            if slides:
+                # Convert slide numbers to range format for frontend compatibility
+                slide_numbers = []
+                for slide_path in slides:
+                    # Extract slide number from path (e.g., "1" from "slides/1.png")
+                    try:
+                        slide_num = int(slide_path.split('/')[-1].split('.')[0])
+                        slide_numbers.append(slide_num)
+                    except (ValueError, IndexError):
+                        # If we can't parse the number, try to extract it differently
+                        import re
+                        match = re.search(r'(\d+)', slide_path)
+                        if match:
+                            slide_numbers.append(int(match.group(1)))
+                
+                if slide_numbers:
+                    slide_numbers.sort()
+                    response_data["slide_range"] = {
+                        "start": min(slide_numbers),
+                        "end": max(slide_numbers)
+                    }
+                    response_data["slides"] = slide_numbers
         elif round_type and round_type in [Enak.RoundType.DAY, Enak.RoundType.NIGHT]:
             # Get current production coefficients and building consumptions
             prod_coeffs = script.getCurrentProductionCoefficients()

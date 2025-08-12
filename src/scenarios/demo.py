@@ -40,10 +40,10 @@ def getScript():
 	script.setVerbose(True)
 
 	#FÁZE 1 - prezentace
-	sr = SlideRange(["scenare/intro1.md", "scenare/intro2.md", "scenare/intro3.md"])
+	sr = SlideRange(["demo/outputname-01.png", "demo/outputname-02.png", "demo/outputname-03.png"])
 	script.addRound(sr)
 
-	sl = Slide("scenare/faze2.md")
+	sl = Slide("demo/outputname-04.png")
 	script.addRound(sl)
 
 	#FÁZE 2 - umístění dvou uhelek a jedné budovy, jednoduché vyrovnání soustavy
@@ -58,7 +58,7 @@ def getScript():
 	n = Night().build()
 	script.addRound(n)
 
-	sl = Slide("scenare/faze3.md")
+	sl = Slide("demo/outputname-05.png")
 	script.addRound(sl)
 
 	#FÁZE 3 - spotřeba města roste o 60MW ve dne, o 120MW v noci
@@ -73,7 +73,7 @@ def getScript():
 	n = Night().build()
 	script.addRound(n)
 
-	sl = Slide("scenare/faze4.md")
+	sl = Slide("demo/outputname-06.png")
 	script.addRound(sl)
 
 	#FÁZE 4 - jaderky, spotřeba roste o 100MW
@@ -86,7 +86,7 @@ def getScript():
 	n = Night().build()
 	script.addRound(n)
 
-	sl = Slide("scenare/faze5.md")
+	sl = Slide("demo/outputname-07.png")
 	script.addRound(sl)
 
 	#FÁZE 5 - spotřeba města roste o 100MW, plynové elektrárny
@@ -99,7 +99,7 @@ def getScript():
 	n = Night().build()
 	script.addRound(n)
 
-	sl = Slide("scenare/faze6.md")
+	sl = Slide("demo/outputname-08.png")
 	script.addRound(sl)
 
 	#FÁZE 6 - spotřeba města roste o 200 MW, nový typ OZE
@@ -114,7 +114,7 @@ def getScript():
 	n = Night().breezy().build()
 	script.addRound(n)
 
-	sl = Slide("scenare/faze7.md")
+	sl = Slide("demo/outputname-09.png")
 	script.addRound(sl)
 	#FÁZE 7 - scénáře
 
@@ -133,7 +133,7 @@ def getScript():
 		.build())
 	script.addRound(n)
 
-	sl = Slide("scenare/faze8.md")
+	sl = Slide("demo/outputname-10.png")
 	script.addRound(sl)
 
 	# MS v hokeji, více lidí ve městě, porucha plynové elektrárny
