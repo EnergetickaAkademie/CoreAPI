@@ -688,6 +688,361 @@ def dashboard():
         }
     })
 
+# Lecturer Interface Endpoints (Lecturer Authentication Required)
+
+@app.route('/lecturer/simulation_dump', methods=['GET'])
+@require_lecturer_auth
+def lecturer_simulation_dump():
+    """
+    Get complete simulation data dump for all groups and boards.
+    Available to lecturers without authentication for external tools.
+    """
+    try:
+        simulation_data = {
+            "timestamp": time.time(),
+            "groups": {},
+            "summary": {
+                "total_groups": 0,
+                "total_boards": 0,
+                "active_games": 0
+            }
+        }
+        
+        # Iterate through all groups
+        for group_id in group_manager.get_all_groups():
+            group_game_state = group_manager.get_game_state(group_id)
+            script = group_game_state.get_script()
+            
+            group_data = {
+                "group_id": group_id,
+                "game_status": {
+                    "active": script is not None,
+                    "current_round": script.current_round_index if script else 0,
+                    "total_rounds": len(script.rounds) if script else 0,
+                    "round_type": script.getCurrentRoundType().value if script and script.getCurrentRoundType() else None,
+                    "scenario": script.__class__.__name__ if script else None,
+                    "game_finished": script is not None and script.current_round_index >= len(script.rounds) if script else False
+                },
+                "boards": {},
+                "production_coefficients": {},
+                "consumption_modifiers": {},
+                "powerplant_ranges": {}
+            }
+            
+            # Add game data if script is active
+            if script:
+                try:
+                    # Get current production coefficients
+                    prod_coeffs = script.getCurrentProductionCoefficients()
+                    group_data["production_coefficients"] = {str(k): v for k, v in prod_coeffs.items()}
+                    
+                    # Get building consumptions
+                    for building in Enak.Building:
+                        consumption = script.getCurrentBuildingConsumption(building)
+                        if consumption is not None:
+                            group_data["consumption_modifiers"][building.name] = consumption
+                    
+                    # Get powerplant ranges (same as prod_vals endpoint)
+                    prod_ranges = {}
+                    for source in Enak.Source:
+                        range_values = script.getCurrentProductionRange(source)
+                        if range_values and range_values != (0.0, 0.0):
+                            prod_ranges[source.name] = {
+                                "min": range_values[0],
+                                "max": range_values[1]
+                            }
+                    group_data["powerplant_ranges"] = prod_ranges
+                            
+                    if script.current_round_index < len(script.rounds):
+                        simulation_data["summary"]["active_games"] += 1
+                except Exception as e:
+                    logger.error(f"Error getting script data for group {group_id}: {e}")
+            
+            # Add board data
+            for board_id, board in group_game_state.boards.items():
+                board_data = {
+                    "board_id": board_id,
+                    "current_production": board.production,
+                    "current_consumption": board.consumption,
+                    "last_updated": board.last_updated,
+                    "connected_production": board.connected_production,
+                    "connected_consumption": board.connected_consumption,
+                    "production_history": board.production_history[-10:],  # Last 10 entries
+                    "consumption_history": board.consumption_history[-10:],  # Last 10 entries
+                    "history_length": {
+                        "production": len(board.production_history),
+                        "consumption": len(board.consumption_history)
+                    }
+                }
+                group_data["boards"][board_id] = board_data
+                simulation_data["summary"]["total_boards"] += 1
+            
+            simulation_data["groups"][group_id] = group_data
+            simulation_data["summary"]["total_groups"] += 1
+        
+        return jsonify(simulation_data)
+        
+    except Exception as e:
+        logger.error(f"Error in lecturer_simulation_dump: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            "error": "Failed to generate simulation dump",
+            "message": str(e),
+            "timestamp": time.time()
+        }), 500
+
+@app.route('/lecturer/submit_board_data', methods=['POST'])
+@require_lecturer_auth
+def lecturer_submit_board_data():
+    """
+    Submit data for a specific board as a lecturer (board spoofing for debugging).
+    Requires lecturer authentication but allows submitting data for any board.
+    
+    Expected JSON payload:
+    {
+        "group_id": "group1",  // optional, defaults to lecturer's group
+        "board_id": "1",
+        "production": 100,
+        "consumption": 80,
+        "connected_production": [10, 20, 30],  // optional
+        "connected_consumption": [15, 25]      // optional
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'JSON data required'}), 400
+        
+        # Extract required fields
+        lecturer_user = getattr(request, 'user', {})
+        lecturer_group_id = lecturer_user.get('group_id', 'group1')
+        
+        group_id = data.get('group_id', lecturer_group_id)  # Use lecturer's group if not specified
+        board_id = data.get('board_id')
+        production = data.get('production')
+        consumption = data.get('consumption')
+        
+        if board_id is None:
+            return jsonify({'error': 'board_id is required'}), 400
+        
+        if production is None or consumption is None:
+            return jsonify({'error': 'production and consumption are required'}), 400
+        
+        # Validate data types
+        try:
+            production = int(production)
+            consumption = int(consumption)
+        except (ValueError, TypeError):
+            return jsonify({'error': 'production and consumption must be integers'}), 400
+        
+        # Get the game state for the group
+        group_game_state = group_manager.get_game_state(group_id)
+        
+        # Get or create the board
+        if board_id not in group_game_state.boards:
+            group_game_state.register_board(board_id)
+        
+        board = group_game_state.get_board(board_id)
+        
+        # Update basic power data
+        board.update_power(production, consumption)
+        
+        # Update connected arrays if provided
+        connected_production = data.get('connected_production')
+        connected_consumption = data.get('connected_consumption')
+        
+        if connected_production is not None:
+            if isinstance(connected_production, list):
+                try:
+                    connected_production = [int(x) for x in connected_production]
+                    board.replace_connected_production(connected_production)
+                except (ValueError, TypeError):
+                    return jsonify({'error': 'connected_production must be a list of integers'}), 400
+            else:
+                return jsonify({'error': 'connected_production must be a list'}), 400
+        
+        if connected_consumption is not None:
+            if isinstance(connected_consumption, list):
+                try:
+                    connected_consumption = [int(x) for x in connected_consumption]
+                    board.replace_connected_consumption(connected_consumption)
+                except (ValueError, TypeError):
+                    return jsonify({'error': 'connected_consumption must be a list of integers'}), 400
+            else:
+                return jsonify({'error': 'connected_consumption must be a list'}), 400
+        
+        logger.info(f"Lecturer {lecturer_user.get('username', 'Unknown')} spoofed data for group {group_id}, board {board_id}: production={production}, consumption={consumption}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Data spoofed for board {board_id} in group {group_id}',
+            'spoofed_by': lecturer_user.get('username', 'Unknown'),
+            'data': {
+                'group_id': group_id,
+                'board_id': board_id,
+                'production': production,
+                'consumption': consumption,
+                'timestamp': board.last_updated
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in lecturer_submit_board_data: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            'error': 'Failed to submit board data',
+            'message': str(e)
+        }), 500
+
+@app.route('/lecturer/board_status/<group_id>/<board_id>', methods=['GET'])
+@require_lecturer_auth
+def lecturer_board_status(group_id, board_id):
+    """
+    Get status of a specific board with lecturer authentication.
+    Available to lecturers for monitoring and debugging.
+    """
+    try:
+        # Get the game state for the group
+        group_game_state = group_manager.get_game_state(group_id)
+        
+        # Check if board exists
+        if board_id not in group_game_state.boards:
+            return jsonify({
+                'error': 'Board not found',
+                'group_id': group_id,
+                'board_id': board_id
+            }), 404
+        
+        board = group_game_state.get_board(board_id)
+        script = group_game_state.get_script()
+        
+        return jsonify({
+            'success': True,
+            'group_id': group_id,
+            'board_id': board_id,
+            'board_data': {
+                'production': board.production,
+                'consumption': board.consumption,
+                'last_updated': board.last_updated,
+                'connected_production': board.connected_production,
+                'connected_consumption': board.connected_consumption,
+                'production_history': board.production_history[-5:],  # Last 5 entries
+                'consumption_history': board.consumption_history[-5:]   # Last 5 entries
+            },
+            'game_status': {
+                'active': script is not None,
+                'current_round': script.current_round_index if script else 0,
+                'total_rounds': len(script.rounds) if script else 0,
+                'round_type': script.getCurrentRoundType().value if script and script.getCurrentRoundType() else None
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in lecturer_board_status: {e}")
+        return jsonify({
+            'error': 'Failed to get board status',
+            'message': str(e)
+        }), 500
+
+@app.route('/lecturer/simulate_board_poll/<group_id>/<board_id>', methods=['GET'])
+@require_lecturer_auth
+def lecturer_simulate_board_poll(group_id, board_id):
+    """
+    Simulate the board polling process for debugging.
+    Returns the same data that a board would receive from /poll_binary but in JSON format.
+    """
+    try:
+        # Get the game state for the group
+        group_game_state = group_manager.get_game_state(group_id)
+        
+        # Check if board exists, create if not
+        if board_id not in group_game_state.boards:
+            group_game_state.register_board(board_id)
+        
+        board = group_game_state.get_board(board_id)
+        script = group_game_state.get_script()
+        
+        if not script:
+            return jsonify({
+                'success': True,
+                'group_id': group_id,
+                'board_id': board_id,
+                'message': 'No active game script',
+                'game_data': {
+                    'production_coefficients': {},
+                    'consumption_coefficients': {}
+                }
+            })
+
+        # Get production coefficients (same as binary endpoint)
+        prod_coeffs = script.getCurrentProductionCoefficients()
+        
+        # Get consumption for all buildings
+        cons_coeffs = {}
+        for building in Enak.Building:
+            consumption = script.getCurrentBuildingConsumption(building)
+            if consumption is not None:
+                cons_coeffs[building.name] = consumption
+
+        lecturer_user = getattr(request, 'user', {})
+        
+        return jsonify({
+            'success': True,
+            'group_id': group_id,
+            'board_id': board_id,
+            'simulated_by': lecturer_user.get('username', 'Unknown'),
+            'game_data': {
+                'production_coefficients': {str(k): v for k, v in prod_coeffs.items()},
+                'consumption_coefficients': cons_coeffs
+            },
+            'game_status': {
+                'active': True,
+                'current_round': script.current_round_index,
+                'total_rounds': len(script.rounds),
+                'round_type': script.getCurrentRoundType().value if script.getCurrentRoundType() else None
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in lecturer_simulate_board_poll: {e}")
+        return jsonify({
+            'error': 'Failed to simulate board poll',
+            'message': str(e)
+        }), 500
+
+@app.route('/lecturer/simulate_board_register/<group_id>/<board_id>', methods=['POST'])
+@require_lecturer_auth
+def lecturer_simulate_board_register(group_id, board_id):
+    """
+    Simulate board registration for debugging.
+    Registers a board as if it connected via the binary protocol.
+    """
+    try:
+        # Get the game state for the group
+        group_game_state = group_manager.get_game_state(group_id)
+        
+        # Register the board
+        group_game_state.register_board(board_id)
+        
+        lecturer_user = getattr(request, 'user', {})
+        logger.info(f"Lecturer {lecturer_user.get('username', 'Unknown')} simulated registration for group {group_id}, board {board_id}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Board {board_id} registered successfully in group {group_id}',
+            'simulated_by': lecturer_user.get('username', 'Unknown'),
+            'group_id': group_id,
+            'board_id': board_id
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in lecturer_simulate_board_register: {e}")
+        return jsonify({
+            'error': 'Failed to simulate board registration',
+            'message': str(e)
+        }), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=True, host="0.0.0.0", port=port)
