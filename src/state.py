@@ -47,6 +47,29 @@ class GameState:
             return self.boards[board_id]
         raise KeyError(f"Board with ID {board_id} not found in game state.")
 
+    def finalize_all_boards_current_round(self):
+        """
+        Finalize the current round for all boards.
+        This should be called when the game ends or when transitioning rounds.
+        """
+        for board in self.boards.values():
+            board.finalize_current_round()
+            
+    def get_all_boards_history_summary(self) -> Dict[str, Dict]:
+        """
+        Get a summary of all boards' history data.
+        """
+        summary = {}
+        for board_id, board in self.boards.items():
+            summary[board_id] = {
+                'round_count': len(board.round_history),
+                'rounds': board.round_history.copy(),
+                'latest_production': board.production,
+                'latest_consumption': board.consumption,
+                'current_round_index': board.current_round_index
+            }
+        return summary
+
 
 class BoardState:
     """
@@ -59,23 +82,77 @@ class BoardState:
         self.last_updated: float = time.time()
         self.connected_consumption: List[int] = []
         self.connected_production: List[int] = []
-        # History tracking for statistics
-        self.production_history: List[int] = []
-        self.consumption_history: List[int] = []
+        # History tracking for statistics - now by round
+        self.production_history: List[int] = []  # Final values from each completed round
+        self.consumption_history: List[int] = []  # Final values from each completed round
+        self.round_history: List[int] = []  # Round indices corresponding to history entries
+        # Track current round to detect round changes
+        self.current_round_index: int = -1
         # Power generation by type tracking
         self.power_generation_by_type: Dict[str, float] = {}
 
-    def update_power(self, production: int, consumption: int):
+    def update_power(self, production: int, consumption: int, script: 'Script' = None):
         """
         Updates the power production and consumption for the board.
+        Only adds to history when the round changes.
         """
+        # Determine current round from script
+        current_round = -1
+        if script:
+            current_round = script.current_round_index
+        
+        # Check if round has changed and we have valid round data
+        if current_round != self.current_round_index and current_round > 0:
+            # Save the last values from the previous round to history
+            if self.current_round_index >= 0:  # Only save if we had a previous round
+                self.production_history.append(self.production)
+                self.consumption_history.append(self.consumption)
+                self.round_history.append(self.current_round_index)
+                print(f"Board {self.id}: Saved round {self.current_round_index} to history - Production: {self.production}, Consumption: {self.consumption}", file=sys.stderr)
+            
+            # Update current round tracker
+            self.current_round_index = current_round
+        
+        # Update current values
         self.production = production
         self.consumption = consumption
         self.last_updated = time.time()
-        
-        # Add to history
-        self.production_history.append(production)
-        self.consumption_history.append(consumption)
+
+    def finalize_current_round(self):
+        """
+        Manually finalize the current round by saving current values to history.
+        Useful when game ends or when you want to ensure the last round is captured.
+        """
+        if self.current_round_index >= 0:
+            self.production_history.append(self.production)
+            self.consumption_history.append(self.consumption)
+            self.round_history.append(self.current_round_index)
+            print(f"Board {self.id}: Finalized round {self.current_round_index} - Production: {self.production}, Consumption: {self.consumption}", file=sys.stderr)
+
+    def get_history_for_round(self, round_index: int) -> Optional[tuple]:
+        """
+        Get the production and consumption values for a specific round.
+        Returns tuple (production, consumption) or None if round not found.
+        """
+        try:
+            history_index = self.round_history.index(round_index)
+            return (self.production_history[history_index], self.consumption_history[history_index])
+        except (ValueError, IndexError):
+            return None
+
+    def get_round_indices(self) -> List[int]:
+        """
+        Get all round indices that have been recorded in history.
+        """
+        return self.round_history.copy()
+
+    def has_unsaved_current_round(self) -> bool:
+        """
+        Check if the current round has data that hasn't been saved to history yet.
+        Useful to know if finalize_current_round() should be called.
+        """
+        return (self.current_round_index >= 0 and 
+                (not self.round_history or self.round_history[-1] != self.current_round_index))
 
     def replace_connected_consumption(self, consumption: List[int]):
         """
@@ -140,5 +217,7 @@ class BoardState:
             "connected_production": self.connected_production,
             "production_history": self.production_history,
             "consumption_history": self.consumption_history,
+            "round_history": self.round_history,
+            "current_round_index": self.current_round_index,
             "power_generation_by_type": self.power_generation_by_type,
         }

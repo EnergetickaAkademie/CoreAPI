@@ -236,7 +236,9 @@ def post_values():
         if not board:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
         
-        board.update_power(production, consumption)
+        # Pass the script to track round changes
+        script = user_game_state.get_script()
+        board.update_power(production, consumption, script)
         return b'OK', 200, {'Content-Type': 'application/octet-stream'}
         
     except BinaryProtocolError as e:
@@ -474,6 +476,10 @@ def next_round():
     
     # Do one step in the script
     if script.step():
+        # Since we advanced to a new round, finalize previous round data for all boards
+        # (The boards will handle this automatically in update_power, but this ensures 
+        # that boards that haven't sent data yet will still have their previous round finalized)
+        
         current_round = script.current_round_index
         round_type = script.getCurrentRoundType()
         
@@ -510,6 +516,8 @@ def next_round():
         
         return jsonify(response_data)
     else:
+        # Game is finished, finalize current round for all boards
+        user_game_state.finalize_all_boards_current_round()
         return jsonify({
             "status": "game_finished", 
             "message": "All rounds completed", 
@@ -558,6 +566,9 @@ def end_game():
     # Get user's game state
     user_game_state = get_user_game_state(request.user)
     
+    # Finalize current round for all boards before ending the game
+    user_game_state.finalize_all_boards_current_round()
+    
     # Reset script to null/none
     user_game_state.script = None
     
@@ -586,6 +597,60 @@ def poll_for_users():
     # Parse user metadata
     user = getattr(request, 'user', {})
     
+    # Build detailed round information
+    round_details = {}
+    if script and script.current_round_index > 0:
+        current_round = script.getCurrentRound()
+        round_type = script.getCurrentRoundType()
+        
+        if current_round and round_type:
+            round_details = {
+                "round_type": round_type.value,
+                "round_type_name": str(round_type),
+                "comment": current_round.getComment() if hasattr(current_round, 'getComment') else None,
+                "info_file": current_round.getInfoFile() if hasattr(current_round, 'getInfoFile') else None
+            }
+            
+            # Add weather information for PlayRounds
+            if round_type in [Enak.RoundType.DAY, Enak.RoundType.NIGHT]:
+                weather = script.getCurrentWeather()
+                if weather:
+                    round_details["weather"] = [
+                        {
+                            "type": w.value,
+                            "name": str(w)
+                        } for w in weather
+                    ]
+                else:
+                    round_details["weather"] = []
+                
+                # Add production coefficients for current round
+                prod_coeffs = script.getCurrentProductionCoefficients()
+                if prod_coeffs:
+                    round_details["production_coefficients"] = {
+                        str(source): coefficient for source, coefficient in prod_coeffs.items()
+                    }
+                
+                # Add building consumptions/modifiers for current round
+                building_modifiers = {}
+                for building in Enak.Building:
+                    consumption = script.getCurrentBuildingConsumption(building)
+                    if consumption is not None:
+                        building_modifiers[building.name] = consumption
+                
+                if building_modifiers:
+                    round_details["building_consumptions"] = building_modifiers
+            
+            # Add slide information for Slide rounds
+            elif round_type == Enak.RoundType.SLIDE:
+                if hasattr(current_round, 'getSlide'):
+                    round_details["slide"] = current_round.getSlide()
+            
+            # Add slides information for SlideRange rounds  
+            elif round_type == Enak.RoundType.SLIDE_RANGE:
+                if hasattr(current_round, 'getSlides'):
+                    round_details["slides"] = current_round.getSlides()
+    
     return jsonify({
         "boards": all_boards,
         "game_status": {
@@ -597,7 +662,8 @@ def poll_for_users():
         "lecturer_info": {
             "user_id": user.get('user_id'),
             "username": user.get('username', 'Unknown')
-        }
+        },
+        "round_details": round_details
     })
 
 @app.route('/game/status', methods=['GET'])
@@ -838,8 +904,9 @@ def lecturer_submit_board_data():
         
         board = group_game_state.get_board(board_id)
         
-        # Update basic power data
-        board.update_power(production, consumption)
+        # Update basic power data with script for round tracking
+        script = group_game_state.get_script()
+        board.update_power(production, consumption, script)
         
         # Update connected arrays if provided
         connected_production = data.get('connected_production')
