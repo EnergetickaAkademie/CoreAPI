@@ -62,6 +62,8 @@ class BoardState:
         # History tracking for statistics
         self.production_history: List[int] = []
         self.consumption_history: List[int] = []
+        # Power generation by type tracking
+        self.power_generation_by_type: Dict[str, float] = {}
 
     def update_power(self, production: int, consumption: int):
         """
@@ -98,3 +100,45 @@ class BoardState:
         Returns the connected production list.
         """
         return self.connected_production
+
+    def update_power_generation_by_type(self, power_type: str, generation: float):
+        """
+        Updates the power generation for a specific power plant type.
+        """
+        self.power_generation_by_type[power_type] = generation
+        self.last_updated = time.time()
+
+    def get_power_generation_by_type(self, power_type: str) -> float:
+        """
+        Returns the power generation for a specific power plant type.
+        """
+        return self.power_generation_by_type.get(power_type, 0.0)
+
+    def get_all_power_generation_by_type(self) -> Dict[str, float]:
+        """
+        Returns all power generation data by type.
+        """
+        return self.power_generation_by_type.copy()
+
+    def set_power_generation_data(self, generation_data: Dict[str, float]):
+        """
+        Sets multiple power generation values at once.
+        """
+        self.power_generation_by_type.update(generation_data)
+        self.last_updated = time.time()
+
+    def to_dict(self):
+        """
+        Returns a dictionary representation of the board state.
+        """
+        return {
+            "board_id": self.id,
+            "production": self.production,
+            "consumption": self.consumption,
+            "last_updated": self.last_updated,
+            "connected_consumption": self.connected_consumption,
+            "connected_production": self.connected_production,
+            "production_history": self.production_history,
+            "consumption_history": self.consumption_history,
+            "power_generation_by_type": self.power_generation_by_type,
+        }

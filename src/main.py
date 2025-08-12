@@ -581,14 +581,7 @@ def poll_for_users():
     all_boards = []
     
     for board_id, board in user_game_state.boards.items():
-        all_boards.append({
-            "board_id": board_id,
-            "production": board.production,
-            "consumption": board.consumption,
-            "connected_production": board.connected_production,
-            "connected_consumption": board.connected_consumption,
-            "last_updated": board.last_updated
-        })
+        all_boards.append(board.to_dict())
     
     # Parse user metadata
     user = getattr(request, 'user', {})
@@ -760,20 +753,15 @@ def lecturer_simulation_dump():
             
             # Add board data
             for board_id, board in group_game_state.boards.items():
-                board_data = {
-                    "board_id": board_id,
-                    "current_production": board.production,
-                    "current_consumption": board.consumption,
-                    "last_updated": board.last_updated,
-                    "connected_production": board.connected_production,
-                    "connected_consumption": board.connected_consumption,
-                    "production_history": board.production_history[-10:],  # Last 10 entries
-                    "consumption_history": board.consumption_history[-10:],  # Last 10 entries
-                    "history_length": {
-                        "production": len(board.production_history),
-                        "consumption": len(board.consumption_history)
-                    }
+                board_data = board.to_dict()
+                # Add some additional computed fields for the dump
+                board_data["production_history"] = board.production_history[-10:]  # Last 10 entries
+                board_data["consumption_history"] = board.consumption_history[-10:]  # Last 10 entries
+                board_data["history_length"] = {
+                    "production": len(board.production_history),
+                    "consumption": len(board.consumption_history)
                 }
+                
                 group_data["boards"][board_id] = board_data
                 simulation_data["summary"]["total_boards"] += 1
             
@@ -805,7 +793,12 @@ def lecturer_submit_board_data():
         "production": 100,
         "consumption": 80,
         "connected_production": [10, 20, 30],  // optional
-        "connected_consumption": [15, 25]      // optional
+        "connected_consumption": [15, 25],     // optional
+        "power_generation_by_type": {          // optional
+            "COAL": 150,
+            "NUCLEAR": 950,
+            "GAS": 450
+        }
     }
     """
     try:
@@ -872,19 +865,41 @@ def lecturer_submit_board_data():
             else:
                 return jsonify({'error': 'connected_consumption must be a list'}), 400
         
+        # Update power generation by type if provided
+        power_generation_by_type = data.get('power_generation_by_type')
+        if power_generation_by_type is not None:
+            if isinstance(power_generation_by_type, dict):
+                try:
+                    # Convert all values to float and validate
+                    validated_power_gen = {}
+                    for power_type, generation in power_generation_by_type.items():
+                        validated_power_gen[str(power_type).upper()] = float(generation)
+                    
+                    board.set_power_generation_data(validated_power_gen)
+                except (ValueError, TypeError) as e:
+                    return jsonify({'error': f'power_generation_by_type values must be numbers: {str(e)}'}), 400
+            else:
+                return jsonify({'error': 'power_generation_by_type must be a dictionary'}), 400
+        
         logger.info(f"Lecturer {lecturer_user.get('username', 'Unknown')} spoofed data for group {group_id}, board {board_id}: production={production}, consumption={consumption}")
+        
+        response_data = {
+            'group_id': group_id,
+            'board_id': board_id,
+            'production': production,
+            'consumption': consumption,
+            'timestamp': board.last_updated
+        }
+        
+        # Include power generation data in response if it was updated
+        if power_generation_by_type is not None:
+            response_data['power_generation_by_type'] = board.get_all_power_generation_by_type()
         
         return jsonify({
             'success': True,
             'message': f'Data spoofed for board {board_id} in group {group_id}',
             'spoofed_by': lecturer_user.get('username', 'Unknown'),
-            'data': {
-                'group_id': group_id,
-                'board_id': board_id,
-                'production': production,
-                'consumption': consumption,
-                'timestamp': board.last_updated
-            }
+            'data': response_data
         })
         
     except Exception as e:
@@ -1042,6 +1057,122 @@ def lecturer_simulate_board_register(group_id, board_id):
             'error': 'Failed to simulate board registration',
             'message': str(e)
         }), 500
+
+# Power Generation by Type Endpoints
+
+@app.route('/power_generation/<board_id>', methods=['GET'])
+@require_board_auth
+def get_power_generation_by_type(board_id):
+    """Get power generation data by type for a specific board"""
+    try:
+        # Get user's game state
+        user_game_state = get_user_game_state(request.user)
+        
+        board = user_game_state.get_board(board_id)
+        if not board:
+            return jsonify({'error': 'Board not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'board_id': board_id,
+            'power_generation_by_type': board.get_all_power_generation_by_type()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in get_power_generation_by_type: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/power_generation/<board_id>', methods=['POST'])
+@require_board_auth  
+def update_power_generation_by_type(board_id):
+    """Update power generation data by type for a specific board"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'JSON data required'}), 400
+        
+        # Get user's game state
+        user_game_state = get_user_game_state(request.user)
+        
+        board = user_game_state.get_board(board_id)
+        if not board:
+            return jsonify({'error': 'Board not found'}), 404
+        
+        # Update power generation data
+        generation_data = data.get('power_generation_by_type', {})
+        if generation_data:
+            board.set_power_generation_data(generation_data)
+        
+        return jsonify({
+            'success': True,
+            'board_id': board_id,
+            'updated_data': board.get_all_power_generation_by_type()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in update_power_generation_by_type: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/power_generation/<board_id>/<power_type>', methods=['POST'])
+@require_board_auth
+def update_single_power_generation(board_id, power_type):
+    """Update power generation for a specific power plant type"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'JSON data required'}), 400
+        
+        generation = data.get('generation')
+        if generation is None:
+            return jsonify({'error': 'Generation value required'}), 400
+        
+        # Get user's game state
+        user_game_state = get_user_game_state(request.user)
+        
+        board = user_game_state.get_board(board_id)
+        if not board:
+            return jsonify({'error': 'Board not found'}), 404
+        
+        # Update single power generation value
+        board.update_power_generation_by_type(power_type.upper(), float(generation))
+        
+        return jsonify({
+            'success': True,
+            'board_id': board_id,
+            'power_type': power_type.upper(),
+            'generation': board.get_power_generation_by_type(power_type.upper())
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in update_single_power_generation: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+# Lecturer endpoint to view all power generation data
+@app.route('/lecturer/power_generation', methods=['GET'])
+@require_lecturer_auth
+def lecturer_get_all_power_generation():
+    """Get power generation data for all boards (lecturer view)"""
+    try:
+        # Get user's game state
+        user_game_state = get_user_game_state(request.user)
+        
+        all_power_data = {}
+        for board_id, board in user_game_state.boards.items():
+            all_power_data[board_id] = {
+                'board_id': board_id,
+                'power_generation_by_type': board.get_all_power_generation_by_type(),
+                'total_production': board.production,
+                'last_updated': board.last_updated
+            }
+        
+        return jsonify({
+            'success': True,
+            'power_generation_data': all_power_data
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in lecturer_get_all_power_generation: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
