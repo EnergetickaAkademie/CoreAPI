@@ -8,7 +8,7 @@ import sys
 import struct
 import logging
 import traceback
-from state import GameState, available_scripts, BoardState
+from state import GameState, available_scripts, available_script_generators, get_fresh_script, BoardState
 from simple_auth import require_lecturer_auth, require_board_auth, require_auth, optional_auth, auth
 from binary_protocol import BoardBinaryProtocol, BinaryProtocolError
 from enak import Enak
@@ -513,10 +513,11 @@ def start_game_scenario():
     # Get user's game state
     user_game_state = get_user_game_state(request.user)
     
-    # Load the selected script and reset completely
-    script = available_scripts[scenario_id]
-    # script.current_round_index = 0  # Reset script to beginning
-    
+    # Get a fresh script instance to ensure clean state
+    try:
+        script = get_fresh_script(scenario_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     
     # Set the script
     user_game_state.script = script

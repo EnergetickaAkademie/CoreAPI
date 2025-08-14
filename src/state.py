@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass
 from enum import Enum
 import time
@@ -10,9 +10,30 @@ from enak import Enak, Script
 from scenarios.demo import getScript
 
 
-available_scripts: Dict[str, Script] = {
-    "demo": getScript()
+# Store script generator functions instead of instances
+# This ensures we get fresh scripts for each game
+available_script_generators: Dict[str, Callable[[], Script]] = {
+    "demo": getScript
 }
+
+# Backwards compatibility - generate instances on demand
+available_scripts: Dict[str, Script] = {}
+
+def get_fresh_script(scenario_id: str) -> Script:
+    """Get a fresh script instance for the given scenario"""
+    if scenario_id in available_script_generators:
+        return available_script_generators[scenario_id]()
+    elif scenario_id in available_scripts:
+        # Fallback for old-style scripts - manually reset state
+        script = available_scripts[scenario_id]
+        script.current_round_index = 0
+        return script
+    else:
+        raise ValueError(f"Unknown scenario: {scenario_id}")
+
+# Populate available_scripts for backwards compatibility
+for scenario_id, generator in available_script_generators.items():
+    available_scripts[scenario_id] = generator()
 
 class GameState:
     """
