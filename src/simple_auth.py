@@ -119,6 +119,7 @@ class SimpleAuth:
         }
         
         return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    
     def get_user_info(self, token):
         """Get user info from JWT token"""
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -128,8 +129,60 @@ class SimpleAuth:
             'user_type': payload['user_type'],
             'group_id': payload.get('group_id', 'group1')
         }
+
+    def get_user_permissions(self, username):
+        """Get permissions for a user (simplified - lecturers get all permissions)"""
+        try:
+            from user_config import get_user_config
+            config = get_user_config()
+            
+            user_info = config.get_user(username)
+            if user_info and user_info['user_type'] == 'lecturer':
+                # All lecturers get basic permissions
+                return ['game_control', 'view_all_boards', 'export_data']
+            elif user_info and user_info['user_type'] == 'board':
+                # Boards get basic capabilities
+                return ['submit_data', 'poll_status']
+            
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"Error getting user permissions: {e}")
         
-    
+        return []
+
+    def get_user_groups(self, username):
+        """Get group access for a user"""
+        try:
+            from user_config import get_user_config
+            config = get_user_config()
+            
+            user_info = config.get_user(username)
+            if user_info:
+                return [user_info.get('group_id', 'group1')]
+            
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"Error getting user groups: {e}")
+        
+        return ['group1']
+
+    def reload_configuration(self):
+        """Reload configuration from file"""
+        try:
+            from user_config import get_user_config
+            config = get_user_config()
+            config.reload()
+            print("✓ Configuration reloaded successfully")
+            return True
+        except ImportError:
+            print("⚠️  User configuration not available")
+            return False
+        except Exception as e:
+            print(f"✗ Error reloading configuration: {e}")
+            return False
+
     def verify_token(self, token):
         """Verify JWT token and return user info"""
         try:
@@ -141,7 +194,7 @@ class SimpleAuth:
             return None  # Invalid token
     
     def load_users_if_empty(self):
-        """Load default users if database is empty"""
+        """Load users from configuration files if database is empty"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -150,10 +203,49 @@ class SimpleAuth:
         conn.close()
         
         if user_count == 0:
+            self.create_users_from_config()
+
+    def create_users_from_config(self):
+        """Create users from TOML configuration file"""
+        try:
+            from user_config import get_user_config
+            config = get_user_config()
+            
+            # Get all users from configuration
+            users = config.get_all_users()
+            
+            if not users:
+                print("⚠️  No users found in configuration, using default users")
+                self.create_default_users()
+                return
+            
+            # Create users in database
+            for user in users:
+                success = self.create_user(
+                    user['username'], 
+                    user['password'], 
+                    user['user_type'], 
+                    user['group_id']
+                )
+                if success:
+                    print(f"✓ Created {user['user_type']} user: {user['username']} ({user['name']})")
+                else:
+                    print(f"✗ Failed to create user: {user['username']} (already exists)")
+            
+            lecturers = config.get_lecturers()
+            boards = config.get_boards()
+            print(f"✓ Successfully loaded {len(boards)} boards and {len(lecturers)} lecturers from configuration")
+            
+        except ImportError:
+            print("⚠️  User configuration module not available, using default users")
+            self.create_default_users()
+        except Exception as e:
+            print(f"⚠️  Error loading users from configuration: {e}")
+            print("Using fallback default users...")
             self.create_default_users()
 
     def create_default_users(self):
-        """Create default users directly"""
+        """Create default users as fallback"""
         default_users = [
             ('lecturer1', 'lecturer123', 'lecturer', 'group1'),
             ('board1', 'board123', 'board', 'group1'),

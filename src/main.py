@@ -1376,6 +1376,66 @@ def lecturer_get_all_power_generation():
         logger.error(f"Error in lecturer_get_all_power_generation: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
+# Configuration Management Endpoints
+@app.route('/config/reload', methods=['POST'])
+@require_lecturer_auth
+def reload_configuration():
+    """Reload configuration from TOML file"""
+    try:
+        # Reload configuration
+        success = auth.reload_configuration()
+        if success:
+            return jsonify({'message': 'Configuration reloaded successfully'})
+        else:
+            return jsonify({'error': 'Failed to reload configuration'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': f'Error reloading configuration: {str(e)}'}), 500
+
+@app.route('/config/users', methods=['GET'])
+@require_lecturer_auth
+def get_configured_users():
+    """Get list of all configured users (without passwords)"""
+    try:
+        from user_config import get_user_config
+        config = get_user_config()
+        
+        board_users = config.get_boards()
+        lecturer_users = config.get_lecturers()
+        
+        # Remove passwords from response
+        for user in board_users + lecturer_users:
+            user.pop('password', None)
+        
+        return jsonify({
+            'boards': board_users,
+            'lecturers': lecturer_users,
+            'total_boards': len(board_users),
+            'total_lecturers': len(lecturer_users)
+        })
+        
+    except ImportError:
+        return jsonify({'error': 'User configuration not available'}), 500
+    except Exception as e:
+        return jsonify({'error': f'Error getting users: {str(e)}'}), 500
+
+@app.route('/config/groups', methods=['GET'])
+@require_lecturer_auth
+def get_configured_groups():
+    """Get list of all configured groups"""
+    try:
+        from user_config import get_user_config
+        config = get_user_config()
+        
+        groups = config.get_groups()
+        
+        return jsonify({'groups': groups})
+        
+    except ImportError:
+        return jsonify({'error': 'User configuration not available'}), 500
+    except Exception as e:
+        return jsonify({'error': f'Error getting groups: {str(e)}'}), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=True, host="0.0.0.0", port=port)
