@@ -43,8 +43,9 @@ class GroupGameManager:
 # Initialize group game manager
 group_manager = GroupGameManager()
 
-# Translation dictionaries for the dashboard
-WEATHER_TRANSLATIONS = {
+# Display text translations for the dashboard
+DISPLAY_TRANSLATIONS = {
+    # Weather conditions
     'SUNNY': {
         'name': 'jasno',
         'temperature': '25°',
@@ -168,25 +169,27 @@ WEATHER_TRANSLATIONS = {
         'wind_speed': '1 m/s',
         'show_wind': True,
         'effects': []
-    }
-}
-
-ROUND_TYPE_TRANSLATIONS = {
+    },
+    # Round types (fallback when no specific weather)
     'DAY': {
         'name': 'Den',
+        'temperature': '25°',
+        'weather_type': 'skoro jasno',
         'icon_url': '/icons/DASH_sunny.svg',
         'background_image': 'url(/icons/bg_day.jpg)',
-        'default_temperature': '25°',
-        'default_weather': 'skoro jasno',
-        'icon': '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.25a.75.75 0 01.75.75v2.25a.75.75 0 01-1.5 0V3a.75.75 0 01.75-.75zM7.5 12a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM18.894 6.166a.75.75 0 00-1.06-1.06l-1.591 1.59a.75.75 0 101.06 1.061l1.591-1.59zM21.75 12a.75.75 0 01-.75.75h-2.25a.75.75 0 010-1.5H21a.75.75 0 01.75.75zM17.834 18.894a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 10-1.061 1.06l1.59 1.591zM12 18a.75.75 0 01.75.75V21a.75.75 0 01-1.5 0v-2.25A.75.75 0 0112 18zM7.758 17.303a.75.75 0 00-1.061-1.06l-1.591 1.59a.75.75 0 001.06 1.061l1.591-1.59zM6 12a.75.75 0 01-.75.75H3a.75.75 0 010-1.5h2.25A.75.75 0 016 12zM6.697 7.757a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 00-1.061 1.06l1.59 1.591z"/></svg>'
+        'wind_speed': '5 m/s',
+        'show_wind': True,
+        'effects': []
     },
     'NIGHT': {
         'name': 'Noc',
+        'temperature': '10°',
+        'weather_type': 'jasná noc',
         'icon_url': '/icons/DASH_moon.svg',
         'background_image': 'url(/icons/bg_night.jpg)',
-        'default_temperature': '10°',
-        'default_weather': 'jasná noc',
-        'icon': '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/></svg>'
+        'wind_speed': '2 m/s',
+        'show_wind': False,
+        'effects': []
     }
 }
 
@@ -683,6 +686,34 @@ def next_round():
                 "production_coefficients": {str(k): v for k, v in prod_coeffs.items()},
                 "consumption_modifiers": cons_modifiers
             }
+            
+            # Add display data for weather/round information
+            round_key = round_type.value  # 'DAY' or 'NIGHT'
+            
+            # Check if there's specific weather data in the script
+            current_round_obj = script.getCurrentRound()
+            weather_key = None
+            
+            # Try to get weather from the round object
+            if hasattr(current_round_obj, 'weather') and current_round_obj.weather:
+                if isinstance(current_round_obj.weather, list) and len(current_round_obj.weather) > 0:
+                    weather_key = current_round_obj.weather[0].name.upper()
+                elif hasattr(current_round_obj.weather, 'upper'):
+                    weather_key = current_round_obj.weather.upper()
+            elif hasattr(current_round_obj, 'getWeather') and current_round_obj.getWeather():
+                weather_data = current_round_obj.getWeather()
+                if isinstance(weather_data, list) and len(weather_data) > 0:
+                    weather_key = weather_data[0].name.upper()
+                elif hasattr(weather_data, 'upper'):
+                    weather_key = weather_data.upper()
+            
+            # Use specific weather data if available, otherwise fall back to generic round data
+            if weather_key and weather_key in DISPLAY_TRANSLATIONS:
+                display_data = DISPLAY_TRANSLATIONS[weather_key].copy()
+            else:
+                display_data = DISPLAY_TRANSLATIONS[round_key].copy()
+            
+            response_data["display_data"] = display_data
         
         return jsonify(response_data)
     else:
@@ -922,8 +953,8 @@ def get_translations():
     """Get translation dictionaries for the dashboard"""
     return jsonify({
         'success': True,
-        'weather': WEATHER_TRANSLATIONS,
-        'round_types': ROUND_TYPE_TRANSLATIONS
+        'weather': {k: v for k, v in DISPLAY_TRANSLATIONS.items() if k not in ['DAY', 'NIGHT']},
+        'round_types': {k: v for k, v in DISPLAY_TRANSLATIONS.items() if k in ['DAY', 'NIGHT']}
     })
 
 # Lecturer Interface Endpoints (Lecturer Authentication Required)
