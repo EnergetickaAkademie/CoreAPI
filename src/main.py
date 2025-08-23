@@ -56,7 +56,7 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Solární elektrárny vyrábí na plný výkon',
-                'icon': '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.25a.75.75 0 01.75.75v2.25a.75.75 0 01-1.5 0V3a.75.75 0 01.75-.75zM7.5 12a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM18.894 6.166a.75.75 0 00-1.06-1.06l-1.591 1.59a.75.75 0 101.06 1.061l1.591-1.59zM21.75 12a.75.75 0 01-.75.75h-2.25a.75.75 0 010-1.5H21a.75.75 0 01.75.75zM17.834 18.894a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 10-1.061 1.06l1.59 1.591zM12 18a.75.75 0 01.75.75V21a.75.75 0 01-1.5 0v-2.25A.75.75 0 0112 18zM7.758 17.303a.75.75 0 00-1.061-1.06l-1.591 1.59a.75.75 0 001.06 1.061l1.591-1.59zM6 12a.75.75 0 01-.75.75H3a.75.75 0 010-1.5h2.25A.75.75 0 016 12zM6.697 7.757a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 00-1.061 1.06l1.59 1.591z"/></svg>'
+                'icon_url': '/icons/DASH_solarPP.svg'
             }
         ]
     },
@@ -70,7 +70,7 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Solární elektrárny vyrábí na poloviční výkon',
-                'icon': '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4.5 9.75a6 6 0 0111.573-2.226 3.75 3.75 0 014.133 4.303A4.5 4.5 0 0118 20.25H6.75a5.25 5.25 0 01-2.23-10.004 6.072 6.072 0 01-.02-.496z"/></svg>'
+                'icon_url': '/icons/DASH_solarPP.svg'
             }
         ]
     },
@@ -84,7 +84,7 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Solární elektrárny nevyrábí',
-                'icon': '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4.5 9.75a6 6 0 0111.573-2.226 3.75 3.75 0 014.133 4.303A4.5 4.5 0 0118 20.25H6.75a5.25 5.25 0 01-2.23-10.004 6.072 6.072 0 01-.02-.496z"/></svg>'
+                'icon_url': '/icons/DASH_solarPP.svg'
             }
         ]
     },
@@ -98,7 +98,7 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Větrné elektrárny vyrábí na plný výkon',
-                'icon': '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 8h7a3 3 0 000-6 1 1 0 010-2 5 5 0 010 10H3a1 1 0 010-2zm0 4h11a3 3 0 000-6 1 1 0 010-2 5 5 0 010 10H3a1 1 0 010-2zm0 4h7a3 3 0 000-6 1 1 0 010-2 5 5 0 010 10H3a1 1 0 010-2z"/></svg>'
+                'icon_url': '/icons/DASH_windPP.svg'
             }
         ]
     },
@@ -112,7 +112,7 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Větrné elektrárny vyrábí na poloviční výkon',
-                'icon': '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 8h7a3 3 0 000-6 1 1 0 010-2 5 5 0 010 10H3a1 1 0 010-2zm0 4h11a3 3 0 000-6 1 1 0 010-2 5 5 0 010 10H3a1 1 0 010-2zm0 4h7a3 3 0 000-6 1 1 0 010-2 5 5 0 010 10H3a1 1 0 010-2z"/></svg>'
+                'icon_url': '/icons/DASH_windPP.svg'
             }
         ]
     },
@@ -126,7 +126,7 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Větrné elektrárny nevyrábí',
-                'icon': '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>'
+                'icon_url': '/icons/DASH_windPP.svg'
             }
         ]
     },
@@ -149,15 +149,15 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Solární elektrárny nevyrábí',
-                'icon': '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>'
+                'icon_url': '/icons/DASH_solarPP.svg'
             },
             {
                 'text': 'Větrné elektrárny vyrábí na sníženém výkonu',
-                'icon': '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 8h7a3 3 0 000-6 1 1 0 010-2 5 5 0 010 10H3a1 1 0 010-2zm0 4h11a3 3 0 000-6 1 1 0 010-2 5 5 0 010 10H3a1 1 0 010-2zm0 4h7a3 3 0 000-6 1 1 0 010-2 5 5 0 010 10H3a1 1 0 010-2z"/></svg>'
+                'icon_url': '/icons/DASH_windPP.svg'
             },
             {
                 'text': 'Baterie vyrábí na sníženém výkonu',
-                'icon': '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M15.75 8.25v4.5a1.5 1.5 0 01-1.5 1.5h-6a1.5 1.5 0 01-1.5-1.5v-4.5a1.5 1.5 0 011.5-1.5h6a1.5 1.5 0 011.5 1.5zm1.5-1.5v7.5a3 3 0 01-3 3h-6a3 3 0 01-3-3v-7.5a3 3 0 013-3h6a3 3 0 013 3z"/></svg>'
+                'icon_url': '/icons/energy.svg'
             }
         ]
     },
