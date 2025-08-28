@@ -9,12 +9,14 @@ from enak import Enak, Script
 
 from scenarios.demo import getScript
 from scenarios.normal import normalScript
+from scenarios.test import getScript as getTestScript
 
 
 # Store script generator functions instead of instances
 # This ensures we get fresh scripts for each game
 available_script_generators: Dict[str, Callable[[], Script]] = {
     "demo": getScript,
+    "test": getTestScript,
     "normal": normalScript
 }
 
