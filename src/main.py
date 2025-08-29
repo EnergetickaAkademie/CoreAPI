@@ -688,7 +688,7 @@ def next_round():
             }
             
             # Add display data for weather/round information
-            round_key = round_type.value  # 'DAY' or 'NIGHT'
+            round_key = round_type.name  # 'DAY' or 'NIGHT'
             
             # Check if there's specific weather data in the script
             current_round_obj = script.getCurrentRound()
