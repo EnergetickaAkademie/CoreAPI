@@ -103,17 +103,17 @@ class GameState:
         disconnected_boards = []
         
         for board_id, board in self.boards.items():
+            board_info = {
+                'board_id': board_id,
+                'display_name': board.display_name,
+                'time_since_update': board.time_since_last_update()
+            }
+            
             if board.is_connected():
-                connected_boards.append({
-                    'board_id': board_id,
-                    'time_since_update': board.time_since_last_update()
-                })
+                connected_boards.append(board_info)
             else:
-                disconnected_boards.append({
-                    'board_id': board_id,
-                    'time_since_update': board.time_since_last_update(),
-                    'last_updated': board.last_updated
-                })
+                board_info['last_updated'] = board.last_updated
+                disconnected_boards.append(board_info)
         
         return {
             'total_boards': len(self.boards),
@@ -131,8 +131,27 @@ class BoardState:
     # Connection timeout in seconds
     CONNECTION_TIMEOUT = 5.0
     
+    @staticmethod
+    def generate_display_name(board_id: str) -> str:
+        """
+        Generate a consistent, user-friendly display name for a board.
+        This ensures boards keep the same name when they reconnect.
+        """
+        if board_id.startswith('board'):
+            try:
+                # Extract number from board_id like 'board1' -> '1'
+                board_number = board_id[5:]  # Remove 'board' prefix
+                return f"Team {board_number}"
+            except (ValueError, IndexError):
+                # Fallback if parsing fails
+                return f"Team {board_id}"
+        else:
+            # For non-standard board IDs, use the ID directly with Team prefix
+            return f"Team {board_id}"
+    
     def __init__(self, id: str):
         self.id = id
+        self.display_name = self.generate_display_name(id)
         self.production: int = 0
         self.consumption: int = 0
         self.last_updated: float = time.time()
@@ -281,6 +300,7 @@ class BoardState:
         """
         return {
             "board_id": self.id,
+            "display_name": self.display_name,
             "production": self.production,
             "consumption": self.consumption,
             "last_updated": self.last_updated,

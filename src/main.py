@@ -739,6 +739,7 @@ def get_statistics():
     for board_id, board in user_game_state.boards.items():
         stats = {
             "board_id": board_id,
+            "display_name": board.display_name,
             "current_production": board.production,
             "current_consumption": board.consumption,
             "connected": board.is_connected(),
