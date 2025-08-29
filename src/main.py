@@ -741,6 +741,8 @@ def get_statistics():
             "board_id": board_id,
             "current_production": board.production,
             "current_consumption": board.consumption,
+            "connected": board.is_connected(),
+            "time_since_update": board.time_since_last_update(),
             "production_history": board.production_history,
             "consumption_history": board.consumption_history,
             "connected_production": board.connected_production,
@@ -749,9 +751,13 @@ def get_statistics():
         }
         statistics.append(stats)
     
+    # Get connection summary
+    connection_summary = user_game_state.get_connection_summary()
+    
     return jsonify({
         "success": True,
         "statistics": statistics,
+        "connection_summary": connection_summary,
         "game_status": {
             "current_round": script.current_round_index if script else 0,
             "total_rounds": len(script.rounds) if script else 0,
@@ -797,6 +803,9 @@ def poll_for_users():
     
     # Parse user metadata
     user = getattr(request, 'user', {})
+    
+    # Get connection summary
+    connection_summary = user_game_state.get_connection_summary()
     
     # Build detailed round information
     round_details = {}
@@ -854,6 +863,7 @@ def poll_for_users():
     
     return jsonify({
         "boards": all_boards,
+        "connection_summary": connection_summary,
         "game_status": {
             "current_round": script.current_round_index if script else 0,
             "total_rounds": len(script.rounds) if script else 0,
@@ -1040,6 +1050,9 @@ def lecturer_simulation_dump():
                 
                 group_data["boards"][board_id] = board_data
                 simulation_data["summary"]["total_boards"] += 1
+            
+            # Add connection summary for the group
+            group_data["connection_summary"] = group_game_state.get_connection_summary()
             
             simulation_data["groups"][group_id] = group_data
             simulation_data["summary"]["total_groups"] += 1
@@ -1452,6 +1465,41 @@ def lecturer_get_all_power_generation():
         return jsonify({'error': 'Internal server error'}), 500
 
 # Configuration Management Endpoints
+@app.route('/connection_status', methods=['GET'])
+@require_lecturer_auth
+def get_connection_status():
+    """Get detailed connection status for all boards"""
+    try:
+        # Get user's game state
+        user_game_state = get_user_game_state(request.user)
+        
+        connection_summary = user_game_state.get_connection_summary()
+        
+        # Add detailed board information
+        detailed_boards = []
+        for board_id, board in user_game_state.boards.items():
+            board_info = {
+                'board_id': board_id,
+                'connected': board.is_connected(),
+                'time_since_update': board.time_since_last_update(),
+                'last_updated': board.last_updated,
+                'current_production': board.production,
+                'current_consumption': board.consumption,
+                'connection_timeout': BoardState.CONNECTION_TIMEOUT
+            }
+            detailed_boards.append(board_info)
+        
+        return jsonify({
+            'success': True,
+            'connection_summary': connection_summary,
+            'detailed_boards': detailed_boards,
+            'connection_timeout_seconds': BoardState.CONNECTION_TIMEOUT
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in get_connection_status: {e}")
+        return jsonify({'error': f'Error getting connection status: {str(e)}'}), 500
+
 @app.route('/config/reload', methods=['POST'])
 @require_lecturer_auth
 def reload_configuration():

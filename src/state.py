@@ -95,11 +95,42 @@ class GameState:
             }
         return summary
 
+    def get_connection_summary(self) -> Dict[str, any]:
+        """
+        Get a summary of board connection status.
+        """
+        connected_boards = []
+        disconnected_boards = []
+        
+        for board_id, board in self.boards.items():
+            if board.is_connected():
+                connected_boards.append({
+                    'board_id': board_id,
+                    'time_since_update': board.time_since_last_update()
+                })
+            else:
+                disconnected_boards.append({
+                    'board_id': board_id,
+                    'time_since_update': board.time_since_last_update(),
+                    'last_updated': board.last_updated
+                })
+        
+        return {
+            'total_boards': len(self.boards),
+            'connected_count': len(connected_boards),
+            'disconnected_count': len(disconnected_boards),
+            'connected_boards': connected_boards,
+            'disconnected_boards': disconnected_boards
+        }
+
 
 class BoardState:
     """
     Represents the state of a board in the application.
     """
+    # Connection timeout in seconds
+    CONNECTION_TIMEOUT = 5.0
+    
     def __init__(self, id: str):
         self.id = id
         self.production: int = 0
@@ -115,6 +146,21 @@ class BoardState:
         self.current_round_index: int = -1
         # Power generation by type tracking
         self.power_generation_by_type: Dict[str, float] = {}
+
+    def is_connected(self) -> bool:
+        """
+        Check if the board is considered connected based on last update time.
+        Returns False if the board hasn't updated within CONNECTION_TIMEOUT seconds.
+        """
+        current_time = time.time()
+        time_since_update = current_time - self.last_updated
+        return time_since_update <= self.CONNECTION_TIMEOUT
+
+    def time_since_last_update(self) -> float:
+        """
+        Returns the time in seconds since the last update.
+        """
+        return time.time() - self.last_updated
 
     def update_power(self, production: int, consumption: int, script: 'Script' = None):
         """
@@ -238,6 +284,8 @@ class BoardState:
             "production": self.production,
             "consumption": self.consumption,
             "last_updated": self.last_updated,
+            "connected": self.is_connected(),
+            "time_since_update": self.time_since_last_update(),
             "connected_consumption": self.connected_consumption,
             "connected_production": self.connected_production,
             "production_history": self.production_history,
