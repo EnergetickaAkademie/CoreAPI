@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, Any
 from dataclasses import dataclass
 from enum import Enum
 import time
@@ -79,6 +79,7 @@ class GameState:
         """
         for board in self.boards.values():
             board.finalize_current_round()
+            board.clear_connected_buildings()  # Clear buildings when game/scenario ends
             
     def get_all_boards_history_summary(self) -> Dict[str, Dict]:
         """
@@ -165,6 +166,8 @@ class BoardState:
         self.current_round_index: int = -1
         # Power generation by type tracking
         self.power_generation_by_type: Dict[str, float] = {}
+        # Connected buildings for persistence across board restarts
+        self.connected_buildings: List[Dict[str, Any]] = []
 
     def is_connected(self) -> bool:
         """
@@ -294,6 +297,35 @@ class BoardState:
         self.power_generation_by_type.update(generation_data)
         self.last_updated = time.time()
 
+    def add_connected_building(self, uid: str, building_type: int):
+        """
+        Add a connected building to the board state.
+        """
+        # Remove if already exists
+        self.connected_buildings = [b for b in self.connected_buildings if b['uid'] != uid]
+        self.connected_buildings.append({'uid': uid, 'building_type': building_type})
+        self.last_updated = time.time()
+
+    def remove_connected_building(self, uid: str):
+        """
+        Remove a connected building from the board state.
+        """
+        self.connected_buildings = [b for b in self.connected_buildings if b['uid'] != uid]
+        self.last_updated = time.time()
+
+    def get_connected_buildings(self) -> List[Dict[str, Any]]:
+        """
+        Get the list of connected buildings.
+        """
+        return self.connected_buildings.copy()
+
+    def clear_connected_buildings(self):
+        """
+        Clear all connected buildings (e.g., when game ends).
+        """
+        self.connected_buildings = []
+        self.last_updated = time.time()
+
     def to_dict(self):
         """
         Returns a dictionary representation of the board state.
@@ -313,4 +345,5 @@ class BoardState:
             "round_history": self.round_history,
             "current_round_index": self.current_round_index,
             "power_generation_by_type": self.power_generation_by_type,
+            "connected_buildings": self.connected_buildings,
         }

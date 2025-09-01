@@ -88,10 +88,10 @@ class BoardBinaryProtocol:
         return success, message
     
     @staticmethod
-    def pack_coefficients_response(production_coeffs: Dict, consumption_coeffs: Dict) -> bytes:
+    def pack_coefficients_response(production_coeffs: Dict, consumption_coeffs: Dict, connected_buildings: List[Dict[str, Any]] = None) -> bytes:
         """
-        Pack production and consumption coefficients
-        Format: prod_count(1) + [source_id(1) + coeff(4)]* + cons_count(1) + [building_id(1) + consumption(4)]*
+        Pack production and consumption coefficients, and optionally connected buildings
+        Format: prod_count(1) + [source_id(1) + coeff(4)]* + cons_count(1) + [building_id(1) + consumption(4)]* + buildings_count(1) + [uid_len(1) + uid + building_type(1)]*
         Uses signed integers for production to support negative values (e.g., battery charging)
         """
         data = b''
@@ -114,7 +114,84 @@ class BoardBinaryProtocol:
             cons_int = int(consumption * 1000) if consumption else 0  # Convert to mW
             data += struct.pack('>Bi', building_id, cons_int)
         
+        # Pack connected buildings
+        if connected_buildings is None:
+            connected_buildings = []
+        buildings_count = len(connected_buildings)
+        data += struct.pack('B', buildings_count)
+        
+        for building in connected_buildings:
+            uid = building.get('uid', '')
+            building_type = building.get('building_type', 0)
+            uid_bytes = uid.encode('utf-8')[:255]  # Limit UID length
+            uid_len = len(uid_bytes)
+            data += struct.pack('B', uid_len)
+            data += uid_bytes
+            data += struct.pack('B', building_type)
+        
         return data
+    
+    @staticmethod
+    def unpack_coefficients_response(data: bytes) -> Tuple[Dict, Dict, List[Dict[str, Any]]]:
+        """
+        Unpack production and consumption coefficients, and connected buildings
+        Returns: (prod_coeffs, cons_coeffs, connected_buildings)
+        """
+        if len(data) < 2:
+            raise BinaryProtocolError("Invalid coefficients data")
+        
+        offset = 0
+        
+        # Unpack production coefficients
+        prod_count = data[offset]
+        offset += 1
+        
+        prod_coeffs = {}
+        for i in range(prod_count):
+            if offset + 5 > len(data):
+                raise BinaryProtocolError("Invalid production coefficient data")
+            source_id = data[offset]
+            coeff_int = struct.unpack('>i', data[offset+1:offset+5])[0]
+            coeff = coeff_int / 1000.0
+            prod_coeffs[source_id] = coeff
+            offset += 5
+        
+        # Unpack consumption coefficients
+        cons_count = data[offset]
+        offset += 1
+        
+        cons_coeffs = {}
+        for i in range(cons_count):
+            if offset + 5 > len(data):
+                raise BinaryProtocolError("Invalid consumption coefficient data")
+            building_id = data[offset]
+            cons_int = struct.unpack('>i', data[offset+1:offset+5])[0]
+            cons = cons_int / 1000.0
+            cons_coeffs[building_id] = cons
+            offset += 5
+        
+        # Unpack connected buildings
+        buildings_count = data[offset]
+        offset += 1
+        
+        connected_buildings = []
+        for i in range(buildings_count):
+            if offset + 1 > len(data):
+                raise BinaryProtocolError("Invalid connected buildings data")
+            uid_len = data[offset]
+            offset += 1
+            
+            if offset + uid_len + 1 > len(data):
+                raise BinaryProtocolError("Invalid building UID data")
+            uid = data[offset:offset+uid_len].decode('utf-8', errors='ignore')
+            offset += uid_len
+            
+            building_type = data[offset]
+            offset += 1
+            
+            connected_buildings.append({'uid': uid, 'building_type': building_type})
+        
+        return prod_coeffs, cons_coeffs, connected_buildings
     
     @staticmethod
     def pack_production_values(prod_coeffs: Dict) -> bytes:
@@ -189,15 +266,65 @@ class BoardBinaryProtocol:
         return production, consumption
     
     @staticmethod
-    def pack_power_data(production: float, consumption: float) -> bytes:
+    def unpack_power_data_with_buildings(data: bytes) -> Tuple[float, float, List[Dict[str, Any]]]:
         """
-        Pack power data for transmission
-        Format: production(4) + consumption(4) = 8 bytes
+        Unpack power data with connected buildings from ESP32
+        Format: production(4) + consumption(4) + buildings_count(1) + [uid_len(1) + uid + building_type(1)]*
+        Returns: (production_W, consumption_W, connected_buildings)
         """
-        prod_mw = int(production * 1000)  # Convert to mW
-        cons_mw = int(consumption * 1000)  # Convert to mW
+        if len(data) < 9:  # At least 8 for power + 1 for count
+            raise BinaryProtocolError(f"Invalid power data length: {len(data)}, expected at least 9 bytes")
         
-        return struct.pack('>ii', prod_mw, cons_mw)
+        prod_mw, cons_mw = struct.unpack('>ii', data[:8])
+        production = prod_mw / 1000.0
+        consumption = cons_mw / 1000.0
+        
+        offset = 8
+        buildings_count = data[offset]
+        offset += 1
+        
+        connected_buildings = []
+        for i in range(buildings_count):
+            if offset + 1 > len(data):
+                raise BinaryProtocolError("Invalid building data")
+            uid_len = data[offset]
+            offset += 1
+            
+            if offset + uid_len + 1 > len(data):
+                raise BinaryProtocolError("Invalid building UID data")
+            uid = data[offset:offset+uid_len].decode('utf-8', errors='ignore')
+            offset += uid_len
+            
+            building_type = data[offset]
+            offset += 1
+            
+            connected_buildings.append({'uid': uid, 'building_type': building_type})
+        
+        return production, consumption, connected_buildings
+    
+    @staticmethod
+    def pack_power_data(production: float, consumption: float, connected_buildings: List[Dict[str, Any]] = None) -> bytes:
+        """
+        Pack power data with optional connected buildings for transmission
+        Format: production(4) + consumption(4) + buildings_count(1) + [uid_len(1) + uid + building_type(1)]*
+        """
+        data = struct.pack('>ii', int(production * 1000), int(consumption * 1000))
+        
+        if connected_buildings is None:
+            connected_buildings = []
+        buildings_count = len(connected_buildings)
+        data += struct.pack('B', buildings_count)
+        
+        for building in connected_buildings:
+            uid = building.get('uid', '')
+            building_type = building.get('building_type', 0)
+            uid_bytes = uid.encode('utf-8')[:255]  # Limit UID length
+            uid_len = len(uid_bytes)
+            data += struct.pack('B', uid_len)
+            data += uid_bytes
+            data += struct.pack('B', building_type)
+        
+        return data
     
     @staticmethod
     def pack_building_table(table: Dict[int, int], version: int) -> bytes:

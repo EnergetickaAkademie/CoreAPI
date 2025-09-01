@@ -270,7 +270,8 @@ def poll_binary():
             # Return empty response when no game is active
             response = BoardBinaryProtocol.pack_coefficients_response(
                 production_coeffs={},
-                consumption_coeffs={}
+                consumption_coeffs={},
+                connected_buildings=board.get_connected_buildings()
             )
             return response, 200, {'Content-Type': 'application/octet-stream'}
 
@@ -284,10 +285,14 @@ def poll_binary():
             if consumption is not None:
                 cons_coeffs[building] = consumption
 
+        # Get connected buildings for this board
+        connected_buildings = board.get_connected_buildings()
+
         # Pack the data using the new method
         response = BoardBinaryProtocol.pack_coefficients_response(
             production_coeffs=prod_coeffs,
-            consumption_coeffs=cons_coeffs
+            consumption_coeffs=cons_coeffs,
+            connected_buildings=connected_buildings
         )
         
         return response, 200, {'Content-Type': 'application/octet-stream'}
@@ -369,9 +374,15 @@ def post_values():
     try:
         data = request.get_data()
         
-        # Unpack using binary protocol
-        production, consumption = BoardBinaryProtocol.unpack_power_values(data)
-        print(f"Received production: {production}, consumption: {consumption}", file=sys.stderr)
+        # Try to unpack with buildings first
+        try:
+            production, consumption, connected_buildings = BoardBinaryProtocol.unpack_power_data_with_buildings(data)
+        except BinaryProtocolError:
+            # Fall back to old format
+            production, consumption = BoardBinaryProtocol.unpack_power_values(data)
+            connected_buildings = []
+        
+        print(f"Received production: {production}, consumption: {consumption}, buildings: {len(connected_buildings)}", file=sys.stderr)
         # Get board ID from authentication (from JWT username)
         user = getattr(request, 'user', {})
         username = user.get('username', '')
@@ -389,6 +400,14 @@ def post_values():
         board = user_game_state.get_board(board_id)
         if not board:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
+        
+        # Update connected buildings if provided
+        if connected_buildings:
+            # Clear existing buildings
+            board.clear_connected_buildings()
+            # Add new buildings
+            for building in connected_buildings:
+                board.add_connected_building(building['uid'], building['building_type'])
         
         # Pass the script to track round changes
         script = user_game_state.get_script()
