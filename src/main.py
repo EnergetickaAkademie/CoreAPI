@@ -8,10 +8,28 @@ import sys
 import struct
 import logging
 import traceback
+import random
+import numpy as np
 from state import GameState, available_scripts, available_script_generators, get_fresh_script, BoardState
 from simple_auth import require_lecturer_auth, require_board_auth, require_auth, optional_auth, auth
 from binary_protocol import BoardBinaryProtocol, BinaryProtocolError
 from enak import Enak
+from MeritOrder import Power
+from scoring import calculate_final_scores
+
+def convert_numpy_types(obj):
+    """Convert NumPy types to native Python types for JSON serialization"""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    return obj
 
 app = Flask(__name__)
 
@@ -42,6 +60,243 @@ class GroupGameManager:
 
 # Initialize group game manager
 group_manager = GroupGameManager()
+
+def generate_game_statistics(game_state: GameState):
+    """
+    Generate comprehensive game statistics for end-of-game display.
+    Returns detailed board statistics and real team performance data using the scoring system.
+    """
+    
+    # Mapping from Source enum names to Power enum values for scoring
+    SOURCE_TO_POWER_MAP = {
+        'COAL': Power.COAL,
+        'GAS': Power.GAS,
+        'NUCLEAR': Power.NUCLEAR,
+        'HYDRO': Power.WATER,
+        'HYDRO_STORAGE': Power.WATER_STORAGE,
+        'WIND': Power.WIND,
+        'PHOTOVOLTAIC': Power.PHOTOVOLTAIC,
+        'BATTERY': Power.BATTERY
+    }
+    
+    statistics = {
+        "boards": [],
+        "team_performance": {},
+        "game_summary": {
+            "total_rounds": 0,
+            "game_duration_minutes": 0,
+            "scenario_name": "Unknown"
+        }
+    }
+    
+    script = game_state.get_script()
+    if script:
+        statistics["game_summary"]["total_rounds"] = len(script.rounds)
+        statistics["game_summary"]["scenario_name"] = script.__class__.__name__
+    
+    # Build history data in the format expected by the scoring system
+    # history = [round1_data, round2_data, ...]
+    # where round_data = {"Team A": {'productions': [(Power.NUCLEAR, 1500), ...], 'total_consumption': 1600}, ...}
+    
+    # First, collect all rounds that were played by any board
+    all_round_indices = set()
+    for board in game_state.boards.values():
+        all_round_indices.update(board.round_history)
+    
+    if not all_round_indices:
+        print("No round history found for any boards", file=sys.stderr)
+        # Return empty statistics with boards data only
+        for board_id, board in game_state.boards.items():
+            board_stats = board.to_dict()
+            board_stats["total_energy_produced"] = 0
+            board_stats["total_energy_consumed"] = 0
+            board_stats["average_production"] = 0
+            board_stats["average_consumption"] = 0
+            board_stats["energy_balance"] = 0
+            board_stats["average_production_by_type"] = {}
+            statistics["boards"].append(board_stats)
+            
+            # Add mock scores since we have no real data
+            statistics["team_performance"][board_id] = {
+                "team_name": board.display_name,
+                "team_number": board_id.replace('board', '') if board_id.startswith('board') else board_id,
+                "ecology": 50,
+                "elmix": 50,
+                "finances": 50,
+                "popularity": 50
+            }
+        return statistics
+    
+    # Sort rounds chronologically
+    sorted_rounds = sorted(all_round_indices)
+    
+    # Build history for scoring system
+    history = []
+    
+    for round_index in sorted_rounds:
+        round_data = {}
+        
+        for board_id, board in game_state.boards.items():
+            team_name = board.display_name
+            
+            # Get data for this specific round from board history
+            if round_index in board.round_history:
+                history_idx = board.round_history.index(round_index)
+                
+                # Get consumption for this round
+                if history_idx < len(board.consumption_history):
+                    total_consumption = board.consumption_history[history_idx]
+                else:
+                    total_consumption = 0
+                
+                # Get power plant data for this round
+                powerplant_data = board.get_powerplant_history_for_round(round_index)
+                productions = []
+                
+                if powerplant_data and 'power_generation_by_type' in powerplant_data:
+                    power_gen = powerplant_data['power_generation_by_type']
+                    
+                    for source_name, generation in power_gen.items():
+                        if generation > 0:  # Only include active generation
+                            # Map source name to Power enum
+                            power_type = SOURCE_TO_POWER_MAP.get(source_name.upper())
+                            if power_type:
+                                # Ensure we pass clean Power enum value, not tuple
+                                clean_power = power_type
+                                if hasattr(power_type, 'value') and isinstance(power_type.value, tuple):
+                                    # Handle case where enum value is a tuple
+                                    clean_power = Power(power_type.value[0])
+                                productions.append((clean_power, generation))
+                
+                # If no production data, try to infer from total production
+                if not productions and history_idx < len(board.production_history):
+                    total_production = board.production_history[history_idx]
+                    if total_production > 0:
+                        # Default to some power source (e.g., GAS) if we don't have breakdown
+                        productions.append((Power.GAS, total_production))
+                
+                round_data[team_name] = {
+                    'productions': productions,
+                    'total_consumption': total_consumption
+                }
+            else:
+                # Board didn't participate in this round
+                round_data[team_name] = {
+                    'productions': [],
+                    'total_consumption': 0
+                }
+        
+        history.append(round_data)
+    
+    # Calculate real scores using the scoring system
+    try:
+        print(f"Attempting to calculate scores with history format check...", file=sys.stderr)
+        # Debug: Print first entry format
+        if history:
+            print(f"First history entry sample: {list(history[0].items())[0] if history[0] else 'Empty'}", file=sys.stderr)
+            
+        final_scores = calculate_final_scores(history)
+        print(f"Calculated final scores: {final_scores}", file=sys.stderr)
+    except Exception as e:
+        print(f"Error calculating scores: {e}", file=sys.stderr)
+        print(f"History data: {history}", file=sys.stderr)
+        # Try to provide a more detailed error trace
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}", file=sys.stderr)
+        final_scores = {}
+    
+    # Process each board's complete data
+    for board_id, board in game_state.boards.items():
+        board_stats = board.to_dict()
+        
+        # Add calculated statistics
+        board_stats["total_energy_produced"] = sum(board.production_history) if board.production_history else 0
+        board_stats["total_energy_consumed"] = sum(board.consumption_history) if board.consumption_history else 0
+        board_stats["average_production"] = (
+            sum(board.production_history) / len(board.production_history) 
+            if board.production_history else 0
+        )
+        board_stats["average_consumption"] = (
+            sum(board.consumption_history) / len(board.consumption_history) 
+            if board.consumption_history else 0
+        )
+        board_stats["energy_balance"] = board_stats["total_energy_produced"] - board_stats["total_energy_consumed"]
+        
+        # Calculate production by type across all rounds
+        production_by_type_summary = {}
+        for round_data in board.powerplant_history:
+            for plant_type, production in round_data.get("power_generation_by_type", {}).items():
+                if plant_type not in production_by_type_summary:
+                    production_by_type_summary[plant_type] = []
+                production_by_type_summary[plant_type].append(production)
+        
+        # Average production by type
+        board_stats["average_production_by_type"] = {}
+        for plant_type, productions in production_by_type_summary.items():
+            board_stats["average_production_by_type"][plant_type] = (
+                sum(productions) / len(productions) if productions else 0
+            )
+        
+        statistics["boards"].append(board_stats)
+        
+        # Get real team performance data from scoring system
+        team_name = board.display_name
+        team_number = board_id.replace('board', '') if board_id.startswith('board') else board_id
+        
+        if team_name in final_scores:
+            scores = final_scores[team_name]
+            statistics["team_performance"][board_id] = {
+                "team_name": team_name,
+                "team_number": team_number,
+                "ecology": convert_numpy_types(scores.get("eco", 0)),
+                "elmix": convert_numpy_types(scores.get("emx", 0)),
+                "finances": convert_numpy_types(scores.get("fin", 0)),
+                "popularity": convert_numpy_types(scores.get("pop", 0))
+            }
+        else:
+            # Fallback to basic calculated scores if scoring system fails
+            total_production = sum(board.production_history) if board.production_history else 0
+            total_consumption = sum(board.consumption_history) if board.consumption_history else 0
+            energy_balance = total_production - total_consumption
+            
+            # Simple scoring based on energy balance (basic fallback)
+            balance_score = max(0, min(100, 100 - abs(energy_balance) / max(total_consumption, 1) * 10))
+            
+            print(f"No scores found for team {team_name}, using calculated fallback", file=sys.stderr)
+            statistics["team_performance"][board_id] = {
+                "team_name": team_name,
+                "team_number": team_number,
+                "ecology": balance_score,
+                "elmix": balance_score,
+                "finances": balance_score,
+                "popularity": balance_score
+            }
+    
+    # Log statistics to console for debugging
+    print("=== GAME STATISTICS ===", file=sys.stderr)
+    print(f"Scenario: {statistics['game_summary']['scenario_name']}", file=sys.stderr)
+    print(f"Total Rounds: {statistics['game_summary']['total_rounds']}", file=sys.stderr)
+    print(f"Teams: {len(statistics['boards'])}", file=sys.stderr)
+    print(f"History rounds processed: {len(history)}", file=sys.stderr)
+    
+    for board_stats in statistics["boards"]:
+        board_id = board_stats["board_id"]
+        print(f"\n{board_stats['display_name']} ({board_id}):", file=sys.stderr)
+        print(f"  Total Production: {board_stats['total_energy_produced']} MW", file=sys.stderr)
+        print(f"  Total Consumption: {board_stats['total_energy_consumed']} MW", file=sys.stderr)
+        print(f"  Energy Balance: {board_stats['energy_balance']} MW", file=sys.stderr)
+        print(f"  Rounds Played: {len(board_stats['round_history'])}", file=sys.stderr)
+        print(f"  Connected Buildings: {len(board_stats['connected_buildings'])}", file=sys.stderr)
+        
+        team_perf = statistics["team_performance"].get(board_id, {})
+        print(f"  Performance - Ecology: {team_perf.get('ecology', 0)}%, "
+              f"ElMix: {team_perf.get('elmix', 0)}%, "
+              f"Finances: {team_perf.get('finances', 0)}%, "
+              f"Popularity: {team_perf.get('popularity', 0)}%", file=sys.stderr)
+    
+    print("=== END GAME STATISTICS ===", file=sys.stderr)
+    
+    return statistics
 
 # Display text translations for the dashboard
 DISPLAY_TRANSLATIONS = {
@@ -737,10 +992,15 @@ def next_round():
     else:
         # Game is finished, finalize current round for all boards
         user_game_state.finalize_all_boards_current_round()
+        
+        # Generate game statistics for display
+        game_statistics = generate_game_statistics(user_game_state)
+        
         return jsonify({
             "status": "game_finished", 
             "message": "All rounds completed", 
-            "finished_by": lecturer_name
+            "finished_by": lecturer_name,
+            "game_statistics": game_statistics
         })
 
 @app.route('/get_statistics', methods=['GET'])
@@ -780,6 +1040,38 @@ def get_statistics():
         "success": True,
         "statistics": statistics,
         "connection_summary": connection_summary,
+        "game_status": {
+            "current_round": script.current_round_index if script else 0,
+            "total_rounds": len(script.rounds) if script else 0,
+            "game_active": script is not None and script.current_round_index < len(script.rounds),
+            "scenario": script.__class__.__name__ if script else None
+        }
+    })
+
+@app.route('/game_statistics', methods=['GET'])
+@require_lecturer_auth
+def get_game_statistics():
+    """Get comprehensive game statistics using the scoring system - for end-of-game display"""
+    # Get user's game state
+    user_game_state = get_user_game_state(request.user)
+    
+    script = user_game_state.get_script()
+    
+    # Check if game is finished
+    if script and script.current_round_index < len(script.rounds):
+        return jsonify({
+            "error": "Game is still active. Statistics are only available after game completion."
+        }), 400
+    
+    # Generate comprehensive game statistics
+    game_statistics = generate_game_statistics(user_game_state)
+    
+    # Convert any NumPy types to JSON-serializable types
+    game_statistics = convert_numpy_types(game_statistics)
+    
+    return jsonify({
+        "success": True,
+        "game_statistics": game_statistics,
         "game_status": {
             "current_round": script.current_round_index if script else 0,
             "total_rounds": len(script.rounds) if script else 0,
