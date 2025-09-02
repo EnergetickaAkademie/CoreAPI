@@ -764,6 +764,9 @@ def get_statistics():
             "time_since_update": board.time_since_last_update(),
             "production_history": board.production_history,
             "consumption_history": board.consumption_history,
+            "round_history": board.round_history,
+            "powerplant_history": board.powerplant_history,
+            "current_power_generation_by_type": board.power_generation_by_type,
             "connected_production": board.connected_production,
             "connected_consumption": board.connected_consumption,
             "last_updated": board.last_updated
@@ -777,6 +780,50 @@ def get_statistics():
         "success": True,
         "statistics": statistics,
         "connection_summary": connection_summary,
+        "game_status": {
+            "current_round": script.current_round_index if script else 0,
+            "total_rounds": len(script.rounds) if script else 0,
+            "game_active": script is not None and script.current_round_index < len(script.rounds),
+            "scenario": script.__class__.__name__ if script else None
+        }
+    })
+
+@app.route('/powerplant_history', methods=['GET'])
+@require_lecturer_auth
+def get_powerplant_history():
+    """Get detailed power plant history for all boards"""
+    # Get user's game state
+    user_game_state = get_user_game_state(request.user)
+    
+    script = user_game_state.get_script()
+    
+    powerplant_data = {}
+    
+    for board_id, board in user_game_state.boards.items():
+        board_powerplant_history = []
+        
+        # Get all power plant history for this board
+        for round_data in board.powerplant_history:
+            round_info = {
+                "round_index": round_data["round_index"],
+                "round_type": round_data["round_type"],
+                "connected_production": round_data["connected_production"],
+                "power_generation_by_type": round_data["power_generation_by_type"],
+                "total_production": round_data["total_production"],
+                "timestamp": round_data["timestamp"]
+            }
+            board_powerplant_history.append(round_info)
+        
+        powerplant_data[board_id] = {
+            "board_id": board_id,
+            "display_name": board.display_name,
+            "powerplant_history": board_powerplant_history,
+            "current_power_generation": board.power_generation_by_type
+        }
+    
+    return jsonify({
+        "success": True,
+        "powerplant_data": powerplant_data,
         "game_status": {
             "current_round": script.current_round_index if script else 0,
             "total_rounds": len(script.rounds) if script else 0,

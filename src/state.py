@@ -78,7 +78,7 @@ class GameState:
         This should be called when advancing to the next round.
         """
         for board in self.boards.values():
-            board.save_current_round_to_history()
+            board.save_current_round_to_history(self.script)
 
     def finalize_all_boards_current_round(self):
         """
@@ -86,7 +86,7 @@ class GameState:
         This should be called when the game ends or when transitioning rounds.
         """
         for board in self.boards.values():
-            board.finalize_current_round()
+            board.finalize_current_round(self.script)
             board.clear_connected_buildings()  # Clear buildings when game/scenario ends
             
     def get_all_boards_history_summary(self) -> Dict[str, Dict]:
@@ -166,10 +166,12 @@ class BoardState:
         self.last_updated: float = time.time()
         self.connected_consumption: List[int] = []
         self.connected_production: List[int] = []
-        # History tracking for statistics - now by round
+        # History tracking for statistics - now by round (only for game rounds: DAY/NIGHT)
         self.production_history: List[int] = []  # Final values from each completed round
         self.consumption_history: List[int] = []  # Final values from each completed round
         self.round_history: List[int] = []  # Round indices corresponding to history entries
+        # Power plant connection and production history by round
+        self.powerplant_history: List[Dict[str, Any]] = []  # Power plant data per completed round
         # Track current round to detect round changes
         self.current_round_index: int = -1
         # Power generation by type tracking
@@ -206,23 +208,62 @@ class BoardState:
         self.consumption = consumption
         self.last_updated = time.time()
 
-    def save_current_round_to_history(self):
+    def save_current_round_to_history(self, script: 'Script' = None):
         """
         Save the current production and consumption values to history.
+        Only saves for game rounds (DAY/NIGHT), not for slide rounds.
         This should be called when advancing to the next round.
         """
-        if self.current_round_index >= 0:
+        # Only save history for game rounds (DAY/NIGHT)
+        if script and self.current_round_index >= 0:
+            current_round = script.getCurrentRound()
+            if current_round and hasattr(current_round, 'getRoundType'):
+                from enak import Enak
+                round_type = current_round.getRoundType()
+                # Only save for DAY and NIGHT rounds, not SLIDE or SLIDE_RANGE
+                if round_type in [Enak.RoundType.DAY, Enak.RoundType.NIGHT]:
+                    self.production_history.append(self.production)
+                    self.consumption_history.append(self.consumption)
+                    self.round_history.append(self.current_round_index)
+                    
+                    # Save power plant data for this round
+                    powerplant_data = {
+                        'round_index': self.current_round_index,
+                        'round_type': round_type.name,
+                        'connected_production': self.connected_production.copy(),
+                        'power_generation_by_type': self.power_generation_by_type.copy(),
+                        'total_production': self.production,
+                        'timestamp': time.time()
+                    }
+                    self.powerplant_history.append(powerplant_data)
+                    
+                    print(f"Board {self.id}: Saved game round {self.current_round_index} ({round_type.name}) to history - Production: {self.production}, Consumption: {self.consumption}, Power plants: {self.power_generation_by_type}", file=sys.stderr)
+                else:
+                    print(f"Board {self.id}: Skipping history save for non-game round {self.current_round_index} ({round_type.name})", file=sys.stderr)
+        elif self.current_round_index >= 0:
+            # Fallback for when script is not available - save anyway
             self.production_history.append(self.production)
             self.consumption_history.append(self.consumption)
             self.round_history.append(self.current_round_index)
-            print(f"Board {self.id}: Saved round {self.current_round_index} to history - Production: {self.production}, Consumption: {self.consumption}", file=sys.stderr)
+            
+            powerplant_data = {
+                'round_index': self.current_round_index,
+                'round_type': 'UNKNOWN',
+                'connected_production': self.connected_production.copy(),
+                'power_generation_by_type': self.power_generation_by_type.copy(),
+                'total_production': self.production,
+                'timestamp': time.time()
+            }
+            self.powerplant_history.append(powerplant_data)
+            
+            print(f"Board {self.id}: Saved round {self.current_round_index} to history (no script) - Production: {self.production}, Consumption: {self.consumption}", file=sys.stderr)
 
-    def finalize_current_round(self):
+    def finalize_current_round(self, script: 'Script' = None):
         """
         Manually finalize the current round by saving current values to history.
         Useful when game ends or when you want to ensure the last round is captured.
         """
-        self.save_current_round_to_history()
+        self.save_current_round_to_history(script)
 
     def get_history_for_round(self, round_index: int) -> Optional[tuple]:
         """
@@ -234,6 +275,22 @@ class BoardState:
             return (self.production_history[history_index], self.consumption_history[history_index])
         except (ValueError, IndexError):
             return None
+
+    def get_powerplant_history_for_round(self, round_index: int) -> Optional[Dict[str, Any]]:
+        """
+        Get the power plant data for a specific round.
+        Returns power plant data dict or None if round not found.
+        """
+        for powerplant_data in self.powerplant_history:
+            if powerplant_data['round_index'] == round_index:
+                return powerplant_data
+        return None
+
+    def get_all_powerplant_history(self) -> List[Dict[str, Any]]:
+        """
+        Get all power plant history data.
+        """
+        return self.powerplant_history.copy()
 
     def get_round_indices(self) -> List[int]:
         """
@@ -345,6 +402,7 @@ class BoardState:
             "production_history": self.production_history,
             "consumption_history": self.consumption_history,
             "round_history": self.round_history,
+            "powerplant_history": self.powerplant_history,
             "current_round_index": self.current_round_index,
             "power_generation_by_type": self.power_generation_by_type,
             "connected_buildings": self.connected_buildings,
