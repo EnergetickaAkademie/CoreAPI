@@ -645,12 +645,11 @@ def next_round():
     user = getattr(request, 'user', {})
     lecturer_name = user.get('username', 'Unknown Lecturer')
     
+    # Save current round data to history for all boards BEFORE advancing
+    user_game_state.save_all_boards_current_round_to_history()
+    
     # Do one step in the script
     if script.step():
-        # Since we advanced to a new round, finalize previous round data for all boards
-        # (The boards will handle this automatically in update_power, but this ensures 
-        # that boards that haven't sent data yet will still have their previous round finalized)
-        
         current_round = script.current_round_index
         round_type = script.getCurrentRoundType()
         

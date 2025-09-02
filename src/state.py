@@ -72,6 +72,14 @@ class GameState:
             return self.boards[board_id]
         raise KeyError(f"Board with ID {board_id} not found in game state.")
 
+    def save_all_boards_current_round_to_history(self):
+        """
+        Save the current round data to history for all boards.
+        This should be called when advancing to the next round.
+        """
+        for board in self.boards.values():
+            board.save_current_round_to_history()
+
     def finalize_all_boards_current_round(self):
         """
         Finalize the current round for all boards.
@@ -187,40 +195,34 @@ class BoardState:
     def update_power(self, production: int, consumption: int, script: 'Script' = None):
         """
         Updates the power production and consumption for the board.
-        Only adds to history when the round changes.
+        History is now saved only when explicitly requested (e.g., during next_round).
         """
-        # Determine current round from script
-        current_round = -1
+        # Determine current round from script and update tracker
         if script:
-            current_round = script.current_round_index
-        
-        # Check if round has changed and we have valid round data
-        if current_round != self.current_round_index and current_round > 0:
-            # Save the last values from the previous round to history
-            if self.current_round_index >= 0:  # Only save if we had a previous round
-                self.production_history.append(self.production)
-                self.consumption_history.append(self.consumption)
-                self.round_history.append(self.current_round_index)
-                print(f"Board {self.id}: Saved round {self.current_round_index} to history - Production: {self.production}, Consumption: {self.consumption}", file=sys.stderr)
-            
-            # Update current round tracker
-            self.current_round_index = current_round
+            self.current_round_index = script.current_round_index
         
         # Update current values
         self.production = production
         self.consumption = consumption
         self.last_updated = time.time()
 
-    def finalize_current_round(self):
+    def save_current_round_to_history(self):
         """
-        Manually finalize the current round by saving current values to history.
-        Useful when game ends or when you want to ensure the last round is captured.
+        Save the current production and consumption values to history.
+        This should be called when advancing to the next round.
         """
         if self.current_round_index >= 0:
             self.production_history.append(self.production)
             self.consumption_history.append(self.consumption)
             self.round_history.append(self.current_round_index)
-            print(f"Board {self.id}: Finalized round {self.current_round_index} - Production: {self.production}, Consumption: {self.consumption}", file=sys.stderr)
+            print(f"Board {self.id}: Saved round {self.current_round_index} to history - Production: {self.production}, Consumption: {self.consumption}", file=sys.stderr)
+
+    def finalize_current_round(self):
+        """
+        Manually finalize the current round by saving current values to history.
+        Useful when game ends or when you want to ensure the last round is captured.
+        """
+        self.save_current_round_to_history()
 
     def get_history_for_round(self, round_index: int) -> Optional[tuple]:
         """
