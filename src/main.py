@@ -1133,7 +1133,16 @@ def end_game():
     
     # Finalize current round for all boards before ending the game
     user_game_state.finalize_all_boards_current_round()
-    
+
+    # Optional: prune boards that are currently disconnected to clean up state
+    # (They will re-register on next connection in a new game.)
+    to_remove = [bid for bid, b in user_game_state.boards.items() if not b.is_connected()]
+    for bid in to_remove:
+        try:
+            del user_game_state.boards[bid]
+        except KeyError:
+            pass
+
     # Reset script to null/none
     user_game_state.script = None
     
@@ -1155,7 +1164,6 @@ def poll_for_users():
     script = user_game_state.get_script()
     
     all_boards = []
-    
     for board_id, board in user_game_state.boards.items():
         all_boards.append(board.to_dict())
     
@@ -1164,6 +1172,26 @@ def poll_for_users():
     
     # Get connection summary
     connection_summary = user_game_state.get_connection_summary()
+
+    # Determine game active state early for later filtering
+    game_active = False
+    if script:
+        game_active = script.current_round_index < len(script.rounds)
+
+    # After game ends, hide disconnected boards from the boards list/summary (cleanup view)
+    if not game_active:
+        # Keep only currently connected boards (recent activity)
+        connected_board_ids = {b['board_id'] for b in all_boards if b.get('connected')}
+        filtered_boards = [b for b in all_boards if b['board_id'] in connected_board_ids]
+        all_boards = filtered_boards
+        # Adjust connection summary to reflect only connected boards (disconnected cleared)
+        connection_summary = {
+            'total_boards': len(all_boards),
+            'connected_count': len(all_boards),
+            'disconnected_count': 0,
+            'connected_boards': [cb for cb in connection_summary['connected_boards'] if cb['board_id'] in connected_board_ids],
+            'disconnected_boards': []
+        }
     
     # Build detailed round information
     round_details = {}
@@ -1226,7 +1254,7 @@ def poll_for_users():
             "current_round": script.current_round_index if script else 0,
             "total_rounds": len(script.rounds) if script else 0,
             "round_type": script.getCurrentRoundType().value if script and script.getCurrentRoundType() else None,
-            "game_active": script is not None and script.current_round_index < len(script.rounds) if script else False
+            "game_active": game_active
         },
         "lecturer_info": {
             "user_id": user.get('user_id'),
