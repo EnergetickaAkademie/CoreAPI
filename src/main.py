@@ -13,7 +13,7 @@ import numpy as np
 from state import GameState, available_scripts, available_script_generators, get_fresh_script, BoardState
 from simple_auth import require_lecturer_auth, require_board_auth, require_auth, optional_auth, auth
 from binary_protocol import BoardBinaryProtocol, BinaryProtocolError
-from enak import Enak
+from enak import Enak, Source
 from MeritOrder import Power
 from scoring import calculate_final_scores
 
@@ -311,7 +311,9 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Solární elektrárny vyrábí na plný výkon',
-                'icon_url': '/icons/DASH_solarPP.svg'
+                'icon_url': '/icons/DASH_solarPP.svg',
+                'type': Source.PHOTOVOLTAIC.value,
+                'priority' : 0
             }
         ]
     },
@@ -325,7 +327,9 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Solární elektrárny vyrábí na poloviční výkon',
-                'icon_url': '/icons/DASH_solarPP.svg'
+                'icon_url': '/icons/DASH_solarPP.svg',
+                'type' :  Source.PHOTOVOLTAIC.value,
+                'priority' : 1
             }
         ]
     },
@@ -339,7 +343,9 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Solární elektrárny nevyrábí',
-                'icon_url': '/icons/DASH_solarPP.svg'
+                'icon_url': '/icons/DASH_solarPP.svg',
+                'type' :  Source.PHOTOVOLTAIC.value,
+                'priority' : 2
             }
         ]
     },
@@ -353,7 +359,9 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Větrné elektrárny vyrábí na plný výkon',
-                'icon_url': '/icons/DASH_windPP.svg'
+                'icon_url': '/icons/DASH_windPP.svg',
+                'type' :  Source.WIND.value,
+                'priority' : 0
             }
         ]
     },
@@ -367,7 +375,9 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Větrné elektrárny vyrábí na poloviční výkon',
-                'icon_url': '/icons/DASH_windPP.svg'
+                'icon_url': '/icons/DASH_windPP.svg',
+                'type' :  Source.WIND.value,
+                'priority' : 1
             }
         ]
     },
@@ -381,7 +391,9 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Větrné elektrárny nevyrábí',
-                'icon_url': '/icons/DASH_windPP.svg'
+                'icon_url': '/icons/DASH_windPP.svg',
+                'type' :  Source.WIND.value,
+                'priority' : 2
             }
         ]
     },
@@ -404,15 +416,21 @@ DISPLAY_TRANSLATIONS = {
         'effects': [
             {
                 'text': 'Solární elektrárny nevyrábí',
-                'icon_url': '/icons/DASH_solarPP.svg'
+                'icon_url': '/icons/DASH_solarPP.svg',
+                'type' :  Source.PHOTOVOLTAIC.value,
+                'priority' : 2
             },
             {
                 'text': 'Větrné elektrárny vyrábí na sníženém výkonu',
-                'icon_url': '/icons/DASH_windPP.svg'
+                'icon_url': '/icons/DASH_windPP.svg',
+                'type' :  Source.WIND.value,
+                'priority' : 1
             },
             {
                 'text': 'Baterie vyrábí na sníženém výkonu',
-                'icon_url': '/icons/energy.svg'
+                'icon_url': '/icons/energy.svg',
+                'type' :  Source.BATTERY.value,
+                'priority' : 1
             }
         ]
     },
@@ -444,7 +462,14 @@ DISPLAY_TRANSLATIONS = {
         'background_image': 'url(/icons/bg_night.jpg)',
         'wind_speed': '2 m/s',
         'show_wind': False,
-        'effects': []
+        'effects': [
+            {
+                'text': 'Solární elektrárny nevyrábí',
+                'icon_url': '/icons/DASH_solarPP.svg',
+                'type' :  Source.PHOTOVOLTAIC.value,
+                'priority' : 2
+            },
+        ]
     }
 }
 
@@ -457,6 +482,50 @@ def get_user_game_state(user_info: dict) -> GameState:
     else:
         group_id = user_info.get('group_id', 'group1')
     return group_manager.get_game_state(group_id)
+
+def filter_effects_by_priority(display_data):
+    """
+    Filter effects to show only the highest priority effect for each power plant type.
+    Higher priority numbers have higher priority (2 is highest, 0 is lowest).
+    Only filters effects that have both 'type' and 'priority' fields (power plant effects).
+    """
+    if 'effects' not in display_data or not display_data['effects']:
+        return display_data
+    
+    # Separate power plant effects (have type and priority) from other effects
+    power_plant_effects = []
+    other_effects = []
+    
+    for effect in display_data['effects']:
+        if effect.get('type') is not None and 'priority' in effect:
+            power_plant_effects.append(effect)
+        else:
+            other_effects.append(effect)
+    
+    # Group power plant effects by type
+    effects_by_type = {}
+    for effect in power_plant_effects:
+        effect_type = effect.get('type')
+        if effect_type not in effects_by_type:
+            effects_by_type[effect_type] = []
+        effects_by_type[effect_type].append(effect)
+    
+    # Keep only the highest priority effect for each power plant type
+    filtered_power_plant_effects = []
+    for effect_type, effects in effects_by_type.items():
+        # Sort by priority (higher number = higher priority)
+        effects.sort(key=lambda x: x.get('priority', 0), reverse=True)
+        # Take the first (highest priority) effect
+        filtered_power_plant_effects.append(effects[0])
+    
+    # Combine filtered power plant effects with other effects (keep all other effects)
+    all_filtered_effects = other_effects + filtered_power_plant_effects
+    
+    # Create a copy of display_data with filtered effects
+    filtered_display_data = display_data.copy()
+    filtered_display_data['effects'] = all_filtered_effects
+    
+    return filtered_display_data
 
 # Game state (backwards compatibility - will use group1 by default)
 game_state = group_manager.get_game_state('group1')
@@ -986,6 +1055,9 @@ def next_round():
             else:
                 display_data = DISPLAY_TRANSLATIONS[round_key].copy()
             
+            # Filter effects to show only highest priority for each power plant type
+            display_data = filter_effects_by_priority(display_data)
+            
             response_data["display_data"] = display_data
         
         return jsonify(response_data)
@@ -1133,16 +1205,7 @@ def end_game():
     
     # Finalize current round for all boards before ending the game
     user_game_state.finalize_all_boards_current_round()
-
-    # Optional: prune boards that are currently disconnected to clean up state
-    # (They will re-register on next connection in a new game.)
-    to_remove = [bid for bid, b in user_game_state.boards.items() if not b.is_connected()]
-    for bid in to_remove:
-        try:
-            del user_game_state.boards[bid]
-        except KeyError:
-            pass
-
+    
     # Reset script to null/none
     user_game_state.script = None
     
@@ -1164,6 +1227,7 @@ def poll_for_users():
     script = user_game_state.get_script()
     
     all_boards = []
+    
     for board_id, board in user_game_state.boards.items():
         all_boards.append(board.to_dict())
     
@@ -1172,26 +1236,6 @@ def poll_for_users():
     
     # Get connection summary
     connection_summary = user_game_state.get_connection_summary()
-
-    # Determine game active state early for later filtering
-    game_active = False
-    if script:
-        game_active = script.current_round_index < len(script.rounds)
-
-    # After game ends, hide disconnected boards from the boards list/summary (cleanup view)
-    if not game_active:
-        # Keep only currently connected boards (recent activity)
-        connected_board_ids = {b['board_id'] for b in all_boards if b.get('connected')}
-        filtered_boards = [b for b in all_boards if b['board_id'] in connected_board_ids]
-        all_boards = filtered_boards
-        # Adjust connection summary to reflect only connected boards (disconnected cleared)
-        connection_summary = {
-            'total_boards': len(all_boards),
-            'connected_count': len(all_boards),
-            'disconnected_count': 0,
-            'connected_boards': [cb for cb in connection_summary['connected_boards'] if cb['board_id'] in connected_board_ids],
-            'disconnected_boards': []
-        }
     
     # Build detailed round information
     round_details = {}
@@ -1254,7 +1298,7 @@ def poll_for_users():
             "current_round": script.current_round_index if script else 0,
             "total_rounds": len(script.rounds) if script else 0,
             "round_type": script.getCurrentRoundType().value if script and script.getCurrentRoundType() else None,
-            "game_active": game_active
+            "game_active": script is not None and script.current_round_index < len(script.rounds) if script else False
         },
         "lecturer_info": {
             "user_id": user.get('user_id'),
@@ -1347,10 +1391,23 @@ def dashboard():
 @app.route('/translations', methods=['GET'])
 def get_translations():
     """Get translation dictionaries for the dashboard"""
+    
+    # Apply priority filtering to weather translations
+    filtered_weather = {}
+    for k, v in DISPLAY_TRANSLATIONS.items():
+        if k not in ['DAY', 'NIGHT']:
+            filtered_weather[k] = filter_effects_by_priority(v.copy())
+    
+    # Apply priority filtering to round type translations  
+    filtered_round_types = {}
+    for k, v in DISPLAY_TRANSLATIONS.items():
+        if k in ['DAY', 'NIGHT']:
+            filtered_round_types[k] = filter_effects_by_priority(v.copy())
+    
     return jsonify({
         'success': True,
-        'weather': {k: v for k, v in DISPLAY_TRANSLATIONS.items() if k not in ['DAY', 'NIGHT']},
-        'round_types': {k: v for k, v in DISPLAY_TRANSLATIONS.items() if k in ['DAY', 'NIGHT']}
+        'weather': filtered_weather,
+        'round_types': filtered_round_types
     })
 
 # Lecturer Interface Endpoints (Lecturer Authentication Required)
