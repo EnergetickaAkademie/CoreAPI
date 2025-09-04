@@ -590,12 +590,14 @@ def poll_binary():
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
         
         script = user_game_state.get_script()
-        if not script:
-            # Return empty response when no game is active
+        if not script or script.current_round_index >= len(script.rounds):
+            # Return explicit zeroes when no game is active / game finished
+            zero_prod = {s: 0.0 for s in Enak.Source}
+            zero_cons = {b: 0.0 for b in Enak.Building}
             response = BoardBinaryProtocol.pack_coefficients_response(
-                production_coeffs={},
-                consumption_coeffs={},
-                connected_buildings=board.get_connected_buildings()
+                production_coeffs=zero_prod,
+                consumption_coeffs=zero_cons,
+                connected_buildings=[]  # do not leak stale buildings
             )
             return response, 200, {'Content-Type': 'application/octet-stream'}
 
@@ -1064,6 +1066,8 @@ def next_round():
     else:
         # Game is finished, finalize current round for all boards
         user_game_state.finalize_all_boards_current_round()
+        # prune stale / disconnected boards to free memory
+        user_game_state.prune_disconnected_boards()
         
         # Generate game statistics for display
         game_statistics = generate_game_statistics(user_game_state)
@@ -1205,8 +1209,9 @@ def end_game():
     
     # Finalize current round for all boards before ending the game
     user_game_state.finalize_all_boards_current_round()
-    
-    # Reset script to null/none
+    # Remove any boards that are no longer connected (timeout passed)
+    user_game_state.prune_disconnected_boards()
+    # Reset script to null/none (no active game)
     user_game_state.script = None
     
     user = getattr(request, 'user', {})

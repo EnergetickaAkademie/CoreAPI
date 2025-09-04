@@ -88,6 +88,28 @@ class GameState:
         for board in self.boards.values():
             board.finalize_current_round(self.script)
             board.clear_connected_buildings()  # Clear buildings when game/scenario ends
+    
+    def prune_disconnected_boards(self, timeout: float = None):
+        """Remove boards that have been disconnected longer than timeout.
+
+        Called when a game ends (explicitly or naturally) to free memory and
+        forget stale building assignments completely.
+        """
+        if timeout is None:
+            from math import inf
+            timeout = BoardState.CONNECTION_TIMEOUT if 'BoardState' in globals() else 5.0
+        now = time.time()
+        to_remove = []
+        for board_id, board in self.boards.items():
+            if (now - board.last_updated) > timeout:
+                to_remove.append(board_id)
+        if to_remove:
+            print(f"Pruning stale boards after game end: {to_remove}", file=sys.stderr)
+        for board_id in to_remove:
+            try:
+                del self.boards[board_id]
+            except KeyError:
+                pass
             
     def get_all_boards_history_summary(self) -> Dict[str, Dict]:
         """
