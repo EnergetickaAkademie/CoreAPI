@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" viewBox="0 0 1920 1080">
+  <!-- Generator: Adobe Illustrator 29.7.1, SVG Export Plug-In . SVG Version: 2.1.1 Build 8)  -->
+  <defs>
+    <style>
+      .st0, .st1 {
+        fill: none;
+      }
+
+      .st2 {
+        fill: #6c8ce0;
+      }
+
+      .st3 {
+        fill: url(#linear-gradient1);
+      }
+
+      .st4 {
+        fill: #2b6faa;
+      }
+
+      .st5 {
+        fill: url(#linear-gradient);
+      }
+
+      .st6 {
+        fill: #ff978c;
+      }
+
+      .st7 {
+        clip-path: url(#clippath-1);
+      }
+
+      .st8 {
+        clip-path: url(#clippath-2);
+      }
+
+      .st1 {
+        stroke: #fff;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 12px;
+      }
+
+      .st9 {
+        fill: #ff79ae;
+      }
+
+      .st10 {
+        fill: #351751;
+      }
+
+      .st11 {
+        clip-path: url(#clippath);
+      }
+    </style>
+    <clipPath id="clippath">
+      <rect class="st0" x="1980" y="2280" width="1920" height="1080"/>
+    </clipPath>
+    <clipPath id="clippath-1">
+      <rect class="st0" x="1980.37" y="2041.42" width="1919.63" height="1411.35"/>
+    </clipPath>
+    <linearGradient id="linear-gradient" x1="2892.27" y1="-5015.49" x2="2892.27" y2="-5843" gradientTransform="translate(0 6842)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d8d8d8"/>
+      <stop offset="1" stop-color="#838383"/>
+    </linearGradient>
+    <clipPath id="clippath-2">
+      <rect class="st0" y="4560" width="1920" height="1080"/>
+    </clipPath>
+    <linearGradient id="linear-gradient1" x1="289.55" y1="-5959.28" x2="289.55" y2="-8249.28" gradientTransform="translate(1170.41 6832.63) scale(.7)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#b9e2f6"/>
+      <stop offset="1" stop-color="#00b3eb"/>
+    </linearGradient>
+  </defs>
+  <g id="Layer_1-2">
+    <rect class="st9" width="1920" height="1080"/>
+    <g>
+      <path class="st1" d="M866.15,247.38h-233.1c-34.85,0-63.11,28.25-63.11,63.11v104.39c0,34.85,28.25,63.11,63.11,63.11h84.75v87.56l65.06-87.56h83.28c34.85,0,63.11-28.25,63.11-63.11v-104.39c0-34.85-28.26-63.11-63.11-63.11h.01Z"/>
+      <g>
+        <circle class="st6" cx="668.18" cy="386.92" r="26.18"/>
+        <circle class="st6" cx="749.6" cy="386.92" r="26.18"/>
+        <circle class="st6" cx="831.02" cy="386.92" r="26.18"/>
+      </g>
+      <path class="st1" d="M1035.34,406.46h233.1c34.85,0,63.11,28.25,63.11,63.11v104.39c0,34.85-28.25,63.11-63.11,63.11h-84.75v87.56l-65.06-87.56h-83.28c-34.85,0-63.11-28.25-63.11-63.11v-104.39c0-34.85,28.26-63.11,63.11-63.11h0Z"/>
+      <g>
+        <circle class="st4" cx="1233.31" cy="546" r="26.18"/>
+        <circle class="st4" cx="1151.89" cy="546" r="26.18"/>
+        <circle class="st4" cx="1070.47" cy="546" r="26.18"/>
+      </g>
+      <path class="st1" d="M866.15,247.38h-233.1c-34.85,0-63.11,28.25-63.11,63.11v104.39c0,34.85,28.25,63.11,63.11,63.11h84.75v87.56l65.06-87.56h83.28c34.85,0,63.11-28.25,63.11-63.11v-104.39c0-34.85-28.26-63.11-63.11-63.11h.01Z"/>
+      <g>
+        <circle class="st2" cx="668.18" cy="386.92" r="26.18"/>
+        <circle class="st2" cx="749.6" cy="386.92" r="26.18"/>
+        <circle class="st2" cx="831.02" cy="386.92" r="26.18"/>
+      </g>
+      <path class="st1" d="M1035.34,406.46h233.1c34.85,0,63.11,28.25,63.11,63.11v104.39c0,34.85-28.25,63.11-63.11,63.11h-84.75v87.56l-65.06-87.56h-83.28c-34.85,0-63.11-28.25-63.11-63.11v-104.39c0-34.85,28.26-63.11,63.11-63.11h0Z"/>
+      <g>
+        <circle class="st10" cx="1233.31" cy="546" r="26.18"/>
+        <circle class="st10" cx="1151.89" cy="546" r="26.18"/>
+        <circle class="st10" cx="1070.47" cy="546" r="26.18"/>
+      </g>
+    </g>
+  </g>
+  <g id="Layer_1-24">
+    <g class="st11">
+      <g class="st7">
+        <rect class="st5" x="-89.78" y="999" width="5964.09" height="827.51"/>
+      </g>
+    </g>
+  </g>
+  <g id="Layer_1-25">
+    <g class="st8">
+      <rect class="st3" x="-4440.82" y="1016" width="11627.83" height="1613.34"/>
+    </g>
+  </g>
+</svg>

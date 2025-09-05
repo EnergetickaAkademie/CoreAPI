@@ -115,8 +115,11 @@ def normalScript():
 	n = Night().build()
 	script.addRound(n)
 
-	sl = Slide("normal/29.svg")
-	script.addRound(sl)
+	sr = SlideRange(["normal/29.svg",
+					"normal/30.svg",
+					"normal/31.svg"])
+
+	script.addRound(sr)
 
 	#FÁZE 6 - spotřeba města roste o 200 MW, nový typ OZE
 	script.changeBuildingsConsumptions(CITY_CENTERS, (200, 200))

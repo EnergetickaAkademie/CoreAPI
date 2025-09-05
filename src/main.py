@@ -419,18 +419,6 @@ DISPLAY_TRANSLATIONS = {
                 'icon_url': '/icons/DASH_solarPP.svg',
                 'type' :  Source.PHOTOVOLTAIC.value,
                 'priority' : 2
-            },
-            {
-                'text': 'Větrné elektrárny vyrábí na sníženém výkonu',
-                'icon_url': '/icons/DASH_windPP.svg',
-                'type' :  Source.WIND.value,
-                'priority' : 1
-            },
-            {
-                'text': 'Baterie vyrábí na sníženém výkonu',
-                'icon_url': '/icons/energy.svg',
-                'type' :  Source.BATTERY.value,
-                'priority' : 1
             }
         ]
     },
