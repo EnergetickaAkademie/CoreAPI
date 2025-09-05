@@ -123,6 +123,21 @@ def normalScript():
 	script.allowProduction(Source.WIND)
 	script.allowProduction(Source.PHOTOVOLTAIC)
 
+	d = (Day()
+		.windy()
+		.sunny()
+		.build())
+
+	script.addRound(d)
+
+	sl = Slide("normal/34.svg")
+	script.addRound(sl)
+
+	n = (Night()
+		.windy()
+		.build())
+
+	script.addRound(n)
 
 	# Scénář 1: zima, zataženo, sněží, je bezvětří
 	d = (Day()
