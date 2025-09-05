@@ -994,7 +994,10 @@ def next_round():
         elif round_type and round_type == Enak.RoundType.SLIDE_RANGE:
             slides = script.getCurrentSlides()
             if slides:
-                # Convert slide numbers to range format for frontend compatibility
+                # Send the raw slide paths to frontend - no conversion needed
+                response_data["slides"] = slides
+                
+                # Also extract slide numbers for backwards compatibility with slide_range field
                 slide_numbers = []
                 for slide_path in slides:
                     # Extract slide number from path (e.g., "1" from "slides/1.png")
@@ -1014,7 +1017,6 @@ def next_round():
                         "start": min(slide_numbers),
                         "end": max(slide_numbers)
                     }
-                    response_data["slides"] = slide_numbers
         elif round_type and round_type in [Enak.RoundType.DAY, Enak.RoundType.NIGHT]:
             # Get current production coefficients and building consumptions
             prod_coeffs = script.getCurrentProductionCoefficients()
