@@ -170,9 +170,11 @@ def generate_game_statistics(game_state: GameState):
                 
                 # If no production data, try to infer from total production
                 if not productions and history_idx < len(board.production_history):
+                    # Only apply legacy fallback if board has never reported per-type data
+                    has_any_type_data = bool(board.get_all_power_generation_by_type())
                     total_production = board.production_history[history_idx]
-                    if total_production > 0:
-                        # Default to some power source (e.g., GAS) if we don't have breakdown
+                    if total_production > 0 and not has_any_type_data:
+                        # Legacy boards (pre prod_connected update) – attribute to GAS to keep scoring working
                         productions.append((Power.GAS, total_production))
                 
                 round_data[team_name] = {
@@ -749,13 +751,13 @@ def post_production_connected():
         count = struct.unpack('B', data[:1])[0]
         offset = 1
         
-        power_plants = {}
+        # power_plants: plant_id -> set_power_mW (as sent from board)
+        power_plants: dict[int,int] = {}
         for i in range(count):
             if offset + 8 > len(data):
                 return b'INVALID_DATA', 400, {'Content-Type': 'application/octet-stream'}
-            
-            plant_id, set_power = struct.unpack('>Ii', data[offset:offset+8])
-            power_plants[plant_id] = set_power
+            plant_id, set_power_mw = struct.unpack('>Ii', data[offset:offset+8])
+            power_plants[plant_id] = set_power_mw
             offset += 8
         
         # Get board ID from authentication (from JWT username)
@@ -774,7 +776,43 @@ def post_production_connected():
         # Update board's connected power plants
         board = user_game_state.get_board(board_id)
         if board:
-            board.replace_connected_production([plant_id for plant_id in power_plants.keys()])
+            # Store just the IDs for backwards compatibility / UI
+            board.replace_connected_production(list(power_plants.keys()))
+
+            # Map numeric IDs (from firmware) to source names expected by scoring.
+            # These IDs MUST stay aligned with power_plant_config.h / Enak.Source.
+            ID_TO_SOURCE = {
+                1: 'PHOTOVOLTAIC',
+                2: 'WIND',
+                3: 'NUCLEAR',
+                4: 'GAS',
+                5: 'HYDRO',
+                6: 'HYDRO_STORAGE',
+                7: 'COAL',
+                8: 'BATTERY'
+            }
+
+            # Update per‑type generation in Watts (board sends mW)
+            reported_ids = set()
+            for pid, mw in power_plants.items():
+                if pid in ID_TO_SOURCE:
+                    reported_ids.add(pid)
+                    watts = mw / 1000.0
+                    board.update_power_generation_by_type(ID_TO_SOURCE[pid], float(watts))
+            # Zero out any previously present types that are no longer reported (disconnected)
+            existing_types = list(board.get_all_power_generation_by_type().keys())
+            for existing in existing_types:
+                # Find its numeric id inverse map
+                # If its id not in reported_ids this cycle, set to zero to avoid stale values
+                try:
+                    # Build inverse lookup lazily
+                    # (cheap given tiny mapping)
+                    inv = {v: k for k, v in ID_TO_SOURCE.items()}
+                    if inv.get(existing) and inv[existing] not in reported_ids:
+                        board.update_power_generation_by_type(existing, 0.0)
+                except Exception:
+                    pass
+
             return b'OK', 200, {'Content-Type': 'application/octet-stream'}
         else:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
