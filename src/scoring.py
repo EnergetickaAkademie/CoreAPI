@@ -147,7 +147,7 @@ def get_balance(team_stats, team, num_rounds):
 	balance_stats = []
 
 	for pdif, op in zip(pd, one_perc):
-		if pdif <= 1:
+		if abs(pdif) <= 1:
 			balance_stats.append(one_round)
 		
 		elif abs(pdif) > op:
@@ -192,7 +192,7 @@ def get_scores(team_stats, team, num_rounds):
 	emx = get_balance_score(team_stats, team, num_rounds) * 100
 	fin = get_finances_score(team_stats, team)
 	eco = get_ecology_score(team_stats, team)
-	pop = (emx + fin + eco + 2 * get_building_popularity(team_stats, team)) / 5 #0 - 100
+	pop = (emx + 2 * fin + eco + 2 * get_building_popularity(team_stats, team)) / 6 #0 - 100
 	
 	return {
 		"emx" : round(emx, 2),
@@ -337,6 +337,21 @@ if __name__ == "__main__":
 
 	history = [{'Team 1': {'productions': [(Power.COAL, 1000.0)], 'total_consumption': 1000}}, {'Team 1': {'productions': [(Power.COAL, 1000.0)], 'total_consumption': 1002}}, {'Team 1': {'productions': [(Power.COAL, 1000.0)], 'total_consumption': 1000}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0)], 'total_consumption': 1200}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0)], 'total_consumption': 1200}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0)], 'total_consumption': 1605}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0)], 'total_consumption': 1605}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0), (Power.WIND, 200.0), (Power.PHOTOVOLTAIC, 405.0)], 'total_consumption': 1605}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0), (Power.WIND, 200.0), (Power.PHOTOVOLTAIC, 405.0)], 'total_consumption': 1605}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0), (Power.WIND, 200.0), (Power.PHOTOVOLTAIC, 405.0)], 'total_consumption': 1605}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0), (Power.WIND, 200.0), (Power.PHOTOVOLTAIC, 405.0)], 'total_consumption': 1605}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0), (Power.WIND, 200.0), (Power.PHOTOVOLTAIC, 405.0)], 'total_consumption': 1605}}]
 	
+	history = [{'Team 5': {'productions': [(Power.GAS, 420.0)], 'total_consumption': 420.0}},
+			{'Team 5': {'productions': [(Power.GAS, 420.0)], 'total_consumption': 420.0}},
+			{'Team 5': {'productions': [(Power.GAS, 419.9)], 'total_consumption': 420.0}},
+			{'Team 5': {'productions': [(Power.GAS, 290.4)], 'total_consumption': 290.0}},
+			{'Team 5': {'productions': [(Power.GAS, 980.0)], 'total_consumption': 980.0}},
+			{'Team 5': {'productions': [(Power.GAS, 950.0)], 'total_consumption': 760.0}},
+			{'Team 5': {'productions': [(Power.GAS, 1201.0)], 'total_consumption': 980.0}},
+			{'Team 5': {'productions': [(Power.GAS, 1201.0)], 'total_consumption': 760.0}},
+			{'Team 5': {'productions': [(Power.GAS, 1201.0)], 'total_consumption': 980.0}},
+			{'Team 5': {'productions': [(Power.GAS, 1201.0)], 'total_consumption': 760.0}},
+			{'Team 5': {'productions': [(Power.GAS, 1201.0)], 'total_consumption': 760.0}},
+			{'Team 5': {'productions': [(Power.GAS, 1001.0)], 'total_consumption': 760.0}},
+			{'Team 5': {'productions': [(Power.GAS, 980.399)], 'total_consumption': 980.0}},
+			{'Team 5': {'productions': [(Power.GAS, 950.0)], 'total_consumption': 760.0}}]
+
 	final_scores = calculate_final_scores(history)
 
 	print(f"fs: {final_scores}")
