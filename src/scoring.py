@@ -202,7 +202,8 @@ def get_scores(team_stats, team, num_rounds):
 	}
 
 def calculate_final_scores(history):
-	print(f"history: {history}")
+	import sys
+	print(f"history = {history}", file=sys.stderr)
 
 	ts = get_team_stats(history)
 	teams = get_teams(history)
