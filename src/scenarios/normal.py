@@ -72,7 +72,6 @@ def normalScript():
 	script.changeBuildingsConsumptions(CITY_CENTERS, (120, 60))
 	script.allowProduction(Source.HYDRO)
 	script.allowProduction(Source.HYDRO_STORAGE)
-	#script.allowProduction(Source.BATTERY)
 
 	d = Day().build()
 	script.addRound(d)
@@ -125,6 +124,7 @@ def normalScript():
 	script.changeBuildingsConsumptions(CITY_CENTERS, (200, 200))
 	script.allowProduction(Source.WIND)
 	script.allowProduction(Source.PHOTOVOLTAIC)
+	script.allowProduction(Source.BATTERY)
 
 	d = (Day()
 		.windy()
