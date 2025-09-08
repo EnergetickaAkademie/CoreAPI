@@ -62,6 +62,20 @@ class GameState:
             self.boards[board_id] = BoardState(board_id)
             print(f"Board {board_id} registered successfully.", file=sys.stderr)
         return self.boards[board_id]
+
+    def reset_for_new_game(self):
+        """Reset per-game state for all boards while keeping registrations.
+
+        This is invoked when a new scenario is started without explicitly
+        calling end_game (lecturer may quickly restart). We must drop any
+        stale per-round histories and connected building state so the new
+        game starts cleanly.
+        """
+        for board in self.boards.values():
+            try:
+                board.reset_for_new_game()
+            except Exception as e:
+                print(f"Failed to reset board {board.id}: {e}", file=sys.stderr)
     def get_board(self, board_id: str) -> Optional['BoardState']:
         """
         Retrieves the board state by ID.
@@ -404,6 +418,30 @@ class BoardState:
         """
         Clear all connected buildings (e.g., when game ends).
         """
+        self.connected_buildings = []
+        self.last_updated = time.time()
+
+    def reset_for_new_game(self):
+        """Reset transient state for a fresh scenario while keeping identity.
+
+        Does NOT remove the board registration or display_name. Clears:
+        - current production/consumption values
+        - any connected production/consumption arrays
+        - per-round histories
+        - power plant generation tracking
+        - connected buildings
+        - current_round_index
+        """
+        self.production = 0
+        self.consumption = 0
+        self.connected_consumption = []
+        self.connected_production = []
+        self.production_history.clear()
+        self.consumption_history.clear()
+        self.round_history.clear()
+        self.powerplant_history.clear()
+        self.current_round_index = -1
+        self.power_generation_by_type.clear()
         self.connected_buildings = []
         self.last_updated = time.time()
 

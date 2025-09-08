@@ -937,6 +937,13 @@ def start_game_scenario():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     
+    # Reset existing per-board state (connected buildings, histories) so
+    # a quick restart does not leak previous game data.
+    try:
+        user_game_state.reset_for_new_game()
+    except Exception as e:
+        print(f"Warning: failed to reset boards for new game: {e}", file=sys.stderr)
+
     # Set the script
     user_game_state.script = script
     
@@ -1239,6 +1246,12 @@ def end_game():
     user_game_state.finalize_all_boards_current_round()
     # Remove any boards that are no longer connected (timeout passed)
     user_game_state.prune_disconnected_boards()
+    # Clear transient per-game data (esp. connected buildings) so a future
+    # start without process restart is clean.
+    try:
+        user_game_state.reset_for_new_game()
+    except Exception as e:
+        print(f"Warning: failed to reset boards on end_game: {e}", file=sys.stderr)
     # Reset script to null/none (no active game)
     user_game_state.script = None
     
