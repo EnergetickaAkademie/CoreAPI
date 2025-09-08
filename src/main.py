@@ -581,15 +581,9 @@ def poll_binary():
         
         script = user_game_state.get_script()
         if not script or script.current_round_index >= len(script.rounds):
-            # Return explicit zeroes when no game is active / game finished
-            zero_prod = {s: 0.0 for s in Enak.Source}
-            zero_cons = {b: 0.0 for b in Enak.Building}
-            response = BoardBinaryProtocol.pack_coefficients_response(
-                production_coeffs=zero_prod,
-                consumption_coeffs=zero_cons,
-                connected_buildings=[]  # do not leak stale buildings
-            )
-            return response, 200, {'Content-Type': 'application/octet-stream'}
+            # Return empty response when no game is active / game finished
+            # This signals to ESP32 that game is paused/ended (gameActive = false)
+            return b'', 200, {'Content-Type': 'application/octet-stream'}
 
         # Get production coefficients
         prod_coeffs = script.getCurrentProductionCoefficients()
@@ -690,13 +684,12 @@ def post_values():
     try:
         data = request.get_data()
         
-        # Try to unpack with buildings first
+        # All boards must send the new format with buildings data
         try:
             production, consumption, connected_buildings = BoardBinaryProtocol.unpack_power_data_with_buildings(data)
-        except BinaryProtocolError:
-            # Fall back to old format
-            production, consumption = BoardBinaryProtocol.unpack_power_values(data)
-            connected_buildings = []
+        except BinaryProtocolError as e:
+            logger.error(f"Invalid power data format from board - new format required: {e}")
+            return b'INVALID_FORMAT', 400, {'Content-Type': 'application/octet-stream'}
         
         print(f"Received production: {production}, consumption: {consumption}, buildings: {len(connected_buildings)}", file=sys.stderr)
         # Get board ID from authentication (from JWT username)
@@ -717,13 +710,17 @@ def post_values():
         if not board:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
         
-        # Update connected buildings if provided
+        # Always replace connected buildings list since all boards now send new format
+        previous_count = len(board.get_connected_buildings()) if hasattr(board, 'get_connected_buildings') else 'n/a'
+        board.clear_connected_buildings()
         if connected_buildings:
-            # Clear existing buildings
-            board.clear_connected_buildings()
-            # Add new buildings
             for building in connected_buildings:
-                board.add_connected_building(building['uid'], building['building_type'])
+                try:
+                    board.add_connected_building(building['uid'], building['building_type'])
+                except Exception as e:
+                    print(f"Failed to add building {building}: {e}", file=sys.stderr)
+        # Debug trace to verify clearing behavior
+        print(f"Board {board_id}: replaced connected_buildings (prev={previous_count}, new={len(connected_buildings)})", file=sys.stderr)
         
         # Pass the script to track round changes
         script = user_game_state.get_script()
