@@ -33,9 +33,28 @@ def convert_numpy_types(obj):
 
 app = Flask(__name__)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure debug mode from environment
+DEBUG_MODE = os.environ.get('DEBUG', 'false').lower() in ('true', '1', 'yes', 'on')
+
+# Configure logging based on debug mode
+if DEBUG_MODE:
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+else:
+    logging.basicConfig(
+        level=logging.WARNING,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+
 logger = logging.getLogger(__name__)
+
+# Log startup mode
+if DEBUG_MODE:
+    logger.info("Application started in DEBUG mode - verbose logging enabled")
+else:
+    logger.warning("Application started in PRODUCTION mode - minimal logging enabled")
 
 # Enable CORS for all routes
 CORS(app, origins=['http://localhost'], 
@@ -104,7 +123,7 @@ def generate_game_statistics(game_state: GameState):
         all_round_indices.update(board.round_history)
     
     if not all_round_indices:
-        print("No round history found for any boards", file=sys.stderr)
+        logger.debug("No round history found for any boards")
         # Return empty statistics with boards data only
         for board_id, board in game_state.boards.items():
             board_stats = board.to_dict()
@@ -192,19 +211,19 @@ def generate_game_statistics(game_state: GameState):
     
     # Calculate real scores using the scoring system
     try:
-        print(f"Attempting to calculate scores with history format check...", file=sys.stderr)
+        logger.debug("Attempting to calculate scores with history format check...")
         # Debug: Print first entry format
         if history:
-            print(f"First history entry sample: {list(history[0].items())[0] if history[0] else 'Empty'}", file=sys.stderr)
+            logger.debug(f"First history entry sample: {list(history[0].items())[0] if history[0] else 'Empty'}")
             
         final_scores = calculate_final_scores(history)
-        print(f"Calculated final scores: {final_scores}", file=sys.stderr)
+        logger.debug(f"Calculated final scores: {final_scores}")
     except Exception as e:
-        print(f"Error calculating scores: {e}", file=sys.stderr)
-        print(f"History data: {history}", file=sys.stderr)
+        logger.error(f"Error calculating scores: {e}")
+        logger.debug(f"History data: {history}")
         # Try to provide a more detailed error trace
         import traceback
-        print(f"Full traceback: {traceback.format_exc()}", file=sys.stderr)
+        logger.debug(f"Full traceback: {traceback.format_exc()}")
         final_scores = {}
     
     # Process each board's complete data
@@ -264,7 +283,7 @@ def generate_game_statistics(game_state: GameState):
             # Simple scoring based on energy balance (basic fallback)
             balance_score = max(0, min(100, 100 - abs(energy_balance) / max(total_consumption, 1) * 10))
             
-            print(f"No scores found for team {team_name}, using calculated fallback", file=sys.stderr)
+            logger.debug(f"No scores found for team {team_name}, using calculated fallback")
             statistics["team_performance"][board_id] = {
                 "team_name": team_name,
                 "team_number": team_number,
@@ -275,28 +294,29 @@ def generate_game_statistics(game_state: GameState):
             }
     
     # Log statistics to console for debugging
-    print("=== GAME STATISTICS ===", file=sys.stderr)
-    print(f"Scenario: {statistics['game_summary']['scenario_name']}", file=sys.stderr)
-    print(f"Total Rounds: {statistics['game_summary']['total_rounds']}", file=sys.stderr)
-    print(f"Teams: {len(statistics['boards'])}", file=sys.stderr)
-    print(f"History rounds processed: {len(history)}", file=sys.stderr)
-    
-    for board_stats in statistics["boards"]:
-        board_id = board_stats["board_id"]
-        print(f"\n{board_stats['display_name']} ({board_id}):", file=sys.stderr)
-        print(f"  Total Production: {board_stats['total_energy_produced']} MW", file=sys.stderr)
-        print(f"  Total Consumption: {board_stats['total_energy_consumed']} MW", file=sys.stderr)
-        print(f"  Energy Balance: {board_stats['energy_balance']} MW", file=sys.stderr)
-        print(f"  Rounds Played: {len(board_stats['round_history'])}", file=sys.stderr)
-        print(f"  Connected Buildings: {len(board_stats['connected_buildings'])}", file=sys.stderr)
+    if DEBUG_MODE:
+        logger.debug("=== GAME STATISTICS ===")
+        logger.debug(f"Scenario: {statistics['game_summary']['scenario_name']}")
+        logger.debug(f"Total Rounds: {statistics['game_summary']['total_rounds']}")
+        logger.debug(f"Teams: {len(statistics['boards'])}")
+        logger.debug(f"History rounds processed: {len(history)}")
         
-        team_perf = statistics["team_performance"].get(board_id, {})
-        print(f"  Performance - Ecology: {team_perf.get('ecology', 0)}%, "
-              f"ElMix: {team_perf.get('elmix', 0)}%, "
-              f"Finances: {team_perf.get('finances', 0)}%, "
-              f"Popularity: {team_perf.get('popularity', 0)}%", file=sys.stderr)
-    
-    print("=== END GAME STATISTICS ===", file=sys.stderr)
+        for board_stats in statistics["boards"]:
+            board_id = board_stats["board_id"]
+            logger.debug(f"\n{board_stats['display_name']} ({board_id}):")
+            logger.debug(f"  Total Production: {board_stats['total_energy_produced']} MW")
+            logger.debug(f"  Total Consumption: {board_stats['total_energy_consumed']} MW")
+            logger.debug(f"  Energy Balance: {board_stats['energy_balance']} MW")
+            logger.debug(f"  Rounds Played: {len(board_stats['round_history'])}")
+            logger.debug(f"  Connected Buildings: {len(board_stats['connected_buildings'])}")
+            
+            team_perf = statistics["team_performance"].get(board_id, {})
+            logger.debug(f"  Performance - Ecology: {team_perf.get('ecology', 0)}%, "
+                        f"ElMix: {team_perf.get('elmix', 0)}%, "
+                        f"Finances: {team_perf.get('finances', 0)}%, "
+                        f"Popularity: {team_perf.get('popularity', 0)}%")
+        
+        logger.debug("=== END GAME STATISTICS ===")
     
     return statistics
 
@@ -523,19 +543,18 @@ game_state = group_manager.get_game_state('group1')
 @app.route('/login', methods=['POST'])
 def login():
     """Login endpoint for both lecturers and boards"""
-    print("Request data for login:", file=sys.stderr)
-    # extract raw string data
-    print(f"Request data: {request.data}", file=sys.stderr)
-    print("endpoint: /login", file=sys.stderr)
+    if DEBUG_MODE:
+        logger.debug("Request data for login:")
+        logger.debug(f"Request data: {request.data}")
+        logger.debug("endpoint: /login")
 
     data = request.get_json()
     
     username = data.get('username')
     password = data.get('password')
     logger.info(f"Login attempt for user: {username}")
-    logger.info(f"User password: {password}")  # For debugging purposes, remove in production
-    print(f"User password: {password}", file=sys.stderr)  # For debugging purposes, remove in production   
-    print(f"Login attempt for user: {username}", file=sys.stderr)
+    if DEBUG_MODE:
+        logger.debug(f"User password: {password}")  # Only log password in debug mode
     if not data:
         return jsonify({'error': 'JSON data required'}), 400
     
@@ -638,7 +657,8 @@ def get_production_values():
             range_values = script.getCurrentProductionRange(source)
             if range_values and range_values != (0.0, 0.0):
                 prod_ranges[source] = range_values
-        print(f"Production ranges: {prod_ranges}", file=sys.stderr)
+        if DEBUG_MODE:
+            logger.debug(f"Production ranges: {prod_ranges}")
         
         # Pack using binary protocol
         data = BoardBinaryProtocol.pack_production_ranges(prod_ranges)
