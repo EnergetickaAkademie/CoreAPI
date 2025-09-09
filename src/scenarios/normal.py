@@ -37,7 +37,7 @@ source_productions = {
 def normalScript():
 	script = Script(building_consumptions, source_productions)
 
-	script.setVerbose(True)
+	#script.setVerbose(True)
 
 	#FÁZE 1 - prezentace
 	sr = SlideRange(["demo/outputname-01.png",
