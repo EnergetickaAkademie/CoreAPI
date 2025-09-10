@@ -326,7 +326,7 @@ DISPLAY_TRANSLATIONS = {
     'SUNNY': {
         'name': 'jasno',
         'temperature': '25°',
-        'icon_url': '/icons/DASH_sunny.svg',
+        'icon_url': '/icons/01_SUNNY.svg',
         'background_image': 'url(/icons/bg_sunny.jpg)',
         'wind_speed': '3 m/s',
         'show_wind': True,
@@ -342,7 +342,7 @@ DISPLAY_TRANSLATIONS = {
     'PARTLY_CLOUDY': {
         'name': 'polojasno',
         'temperature': '20°',
-        'icon_url': '/icons/DASH_cloud.svg',
+        'icon_url': '/icons/02_CLOUDY.svg',
         'background_image': 'url(/icons/bg_partly_cloudy.jpg)',
         'wind_speed': '4 m/s',
         'show_wind': True,
@@ -358,7 +358,7 @@ DISPLAY_TRANSLATIONS = {
     'CLOUDY': {
         'name': 'oblačno',
         'temperature': '15°',
-        'icon_url': '/icons/DASH_cloud.svg',
+        'icon_url': '/icons/03_OVERCAST.svg',
         'background_image': 'url(/icons/bg_cloudy.jpg)',
         'wind_speed': '2 m/s',
         'show_wind': True,
@@ -374,9 +374,9 @@ DISPLAY_TRANSLATIONS = {
     'WINDY': {
         'name': 'větrno',
         'temperature': '18°',
-        'icon_url': '/icons/DASH_wind-velocity.svg',
+        'icon_url': '/icons/09_WINDY.svg',
         'background_image': 'url(/icons/bg_windy.jpg)',
-        'wind_speed': '8 m/s',
+        'wind_speed': '14 m/s',
         'show_wind': True,
         'effects': [
             {
@@ -390,9 +390,9 @@ DISPLAY_TRANSLATIONS = {
     'BREEZY': {
         'name': 'mírný vítr',
         'temperature': '16°',
-        'icon_url': '/icons/DASH_wind-velocity.svg',
+        'icon_url': '/icons/08_MODERATE-WIND.svg',
         'background_image': 'url(/icons/bg_breezy.jpg)',
-        'wind_speed': '5 m/s',
+        'wind_speed': '8 m/s',
         'show_wind': True,
         'effects': [
             {
@@ -406,7 +406,7 @@ DISPLAY_TRANSLATIONS = {
     'CALM': {
         'name': 'bezvětří',
         'temperature': '22°',
-        'icon_url': '/icons/DASH_sunny.svg',
+        'icon_url': '/icons/07_NO-WIND.svg',
         'background_image': 'url(/icons/bg_calm.jpg)',
         'wind_speed': '0 m/s',
         'show_wind': False,
@@ -422,7 +422,7 @@ DISPLAY_TRANSLATIONS = {
     'RAINY': {
         'name': 'deštivo',
         'temperature': '12°',
-        'icon_url': '/icons/DASH_cloud.svg',
+        'icon_url': '/icons/04_RAINY.svg',
         'background_image': 'url(/icons/bg_rainy.jpg)',
         'wind_speed': '6 m/s',
         'show_wind': True,
@@ -431,7 +431,7 @@ DISPLAY_TRANSLATIONS = {
     'SNOWY': {
         'name': 'sněžení',
         'temperature': '-2°',
-        'icon_url': '/icons/DASH_cloud.svg',
+        'icon_url': '/icons/05_SNOW.svg',
         'background_image': 'url(/icons/bg_snowy.jpg)',
         'wind_speed': '4 m/s',
         'show_wind': True,
@@ -447,7 +447,7 @@ DISPLAY_TRANSLATIONS = {
     'FOGGY': {
         'name': 'mlhavo',
         'temperature': '8°',
-        'icon_url': '/icons/DASH_cloud.svg',
+        'icon_url': '/icons/06_FOG.svg',
         'background_image': 'url(/icons/bg_foggy.jpg)',
         'wind_speed': '1 m/s',
         'show_wind': True,
@@ -456,9 +456,9 @@ DISPLAY_TRANSLATIONS = {
     # Round types (fallback when no specific weather)
     'DAY': {
         'name': 'Den',
-        'temperature': '25°',
-        'weather_type': 'skoro jasno',
-        'icon_url': '/icons/DASH_sunny.svg',
+        'temperature': f'{random.randint(15, 27)}°',
+        'weather_type': 'jasno',
+        'icon_url': '/icons/01_SUNNY.svg',
         'background_image': 'url(/icons/bg_day.jpg)',
         'wind_speed': '5 m/s',
         'show_wind': True,
@@ -466,8 +466,8 @@ DISPLAY_TRANSLATIONS = {
     },
     'NIGHT': {
         'name': 'Noc',
-        'temperature': '10°',
-        'weather_type': 'jasná noc',
+        'temperature': f'{random.randint(5, 17)}°',
+        'weather_type': 'noc',
         'icon_url': '/icons/DASH_moon.svg',
         'background_image': 'url(/icons/bg_night.jpg)',
         'wind_speed': '2 m/s',
