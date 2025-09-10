@@ -476,7 +476,7 @@ DISPLAY_TRANSLATIONS = {
         'name': 'Noc',
         'temperature': f'{random.randint(5, 17)}°',
         'weather_type': 'noc',
-        'icon_url': '/icons/DASH_moon.svg',
+        'icon_url': '/icons/10_night.svg',
         'background_image': 'url(/icons/bg_night.jpg)',
         'wind_speed': '2 m/s',
         'show_wind': False,
