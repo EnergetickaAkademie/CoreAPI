@@ -10,7 +10,15 @@ from enak import Enak, Script
 from scenarios.demo import getScript
 from scenarios.normal import normalScript
 from scenarios.test import getScript as getTestScript
+from user_config import get_user_config
 
+# Global debug flag from environment variable
+DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
+
+def debug_print(message):
+    """Print debug message only if DEBUG is enabled"""
+    if DEBUG:
+        print(f"DEBUG: {message}")
 
 # Store script generator functions instead of instances
 # This ensures we get fresh scripts for each game
@@ -57,10 +65,10 @@ class GameState:
         """
         Registers a new board in the game state.
         """
-        print(f"Registering board: {board_id}", file=sys.stderr)
+        debug_print(f"Registering board: {board_id}")
         if board_id not in self.boards:
             self.boards[board_id] = BoardState(board_id)
-            print(f"Board {board_id} registered successfully.", file=sys.stderr)
+            debug_print(f"Board {board_id} registered successfully.")
         return self.boards[board_id]
 
     def reset_for_new_game(self):
@@ -80,8 +88,8 @@ class GameState:
         """
         Retrieves the board state by ID.
         """
-        print(f"Retrieving board: {board_id}", file=sys.stderr)
-        print(self.boards, file=sys.stderr)
+        debug_print(f"Retrieving board: {board_id}")
+        debug_print(str(self.boards))
         if board_id in self.boards:
             return self.boards[board_id]
         raise KeyError(f"Board with ID {board_id} not found in game state.")
@@ -118,7 +126,7 @@ class GameState:
             if (now - board.last_updated) > timeout:
                 to_remove.append(board_id)
         if to_remove:
-            print(f"Pruning stale boards after game end: {to_remove}", file=sys.stderr)
+            debug_print(f"Pruning stale boards after game end: {to_remove}")
         for board_id in to_remove:
             try:
                 del self.boards[board_id]
@@ -181,18 +189,42 @@ class BoardState:
         """
         Generate a consistent, user-friendly display name for a board.
         This ensures boards keep the same name when they reconnect.
+        First tries to get display_name from users.toml configuration,
+        then falls back to generated names.
         """
+        debug_print(f"generate_display_name called for board_id: {board_id}")
+        
+        # Try to get display name from configuration first
+        try:
+            config = get_user_config()
+            config_display_name = config.get_board_display_name(board_id)
+            if config_display_name:
+                debug_print(f"Found config display_name: '{config_display_name}' for {board_id}")
+                return config_display_name
+            else:
+                debug_print(f"No config display_name found for {board_id}")
+        except Exception as e:
+            print(f"WARNING: Could not load display name from config for {board_id}: {e}", file=sys.stderr)
+        
+        # Fallback to generated names
+        debug_print(f"Using fallback name generation for {board_id}")
         if board_id.startswith('board'):
             try:
                 # Extract number from board_id like 'board1' -> '1'
                 board_number = board_id[5:]  # Remove 'board' prefix
-                return f"Team {board_number}"
+                fallback_name = f"Tým {board_number}"
+                debug_print(f"Generated fallback name: '{fallback_name}' for {board_id}")
+                return fallback_name
             except (ValueError, IndexError):
                 # Fallback if parsing fails
-                return f"Team {board_id}"
+                fallback_name = f"Tým {board_id}"
+                debug_print(f"Generated fallback name (error case): '{fallback_name}' for {board_id}")
+                return fallback_name
         else:
             # For non-standard board IDs, use the ID directly with Team prefix
-            return f"Team {board_id}"
+            fallback_name = f"Tým {board_id}"
+            debug_print(f"Generated fallback name (non-standard): '{fallback_name}' for {board_id}")
+            return fallback_name
     
     def __init__(self, id: str):
         self.id = id
@@ -273,9 +305,9 @@ class BoardState:
                     }
                     self.powerplant_history.append(powerplant_data)
                     
-                    print(f"Board {self.id}: Saved game round {self.current_round_index} ({round_type.name}) to history - Production: {self.production}, Consumption: {self.consumption}, Power plants: {self.power_generation_by_type}", file=sys.stderr)
+                    debug_print(f"Board {self.id}: Saved game round {self.current_round_index} ({round_type.name}) to history - Production: {self.production}, Consumption: {self.consumption}, Power plants: {self.power_generation_by_type}")
                 else:
-                    print(f"Board {self.id}: Skipping history save for non-game round {self.current_round_index} ({round_type.name})", file=sys.stderr)
+                    debug_print(f"Board {self.id}: Skipping history save for non-game round {self.current_round_index} ({round_type.name})")
         elif self.current_round_index >= 0:
             # Fallback for when script is not available - save anyway
             self.production_history.append(self.production)
@@ -292,7 +324,7 @@ class BoardState:
             }
             self.powerplant_history.append(powerplant_data)
             
-            print(f"Board {self.id}: Saved round {self.current_round_index} to history (no script) - Production: {self.production}, Consumption: {self.consumption}", file=sys.stderr)
+            debug_print(f"Board {self.id}: Saved round {self.current_round_index} to history (no script) - Production: {self.production}, Consumption: {self.consumption}")
 
     def finalize_current_round(self, script: 'Script' = None):
         """

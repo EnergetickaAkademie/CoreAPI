@@ -1,4 +1,8 @@
 from enak.Enak import *
+import os
+
+# Global debug flag from environment variable
+DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
 
 building_consumptions = {
 	# Default building consumptions (day, night) - same as demo scenario
@@ -37,7 +41,7 @@ source_productions = {
 def getScript():
 	script = Script(building_consumptions, source_productions)
 	
-	script.setVerbose(True)
+	script.setVerbose(DEBUG)
 	
 	# Allow ALL production sources from the start - everything unlocked for testing
 	script.allowProduction(Source.COAL)

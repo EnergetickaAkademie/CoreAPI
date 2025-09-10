@@ -3,7 +3,17 @@ from MeritOrder import MeritOrder, Power
 from typing import List, Tuple, Dict
 import numpy as np
 import json
+import os
+import sys
 from copy import deepcopy
+
+# Global debug flag from environment variable
+DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
+
+def debug_print(message):
+    """Print debug message only if DEBUG is enabled"""
+    if DEBUG:
+        print(f"DEBUG: {message}")
 
 prices = {
 	Power.COAL: 101,
@@ -203,7 +213,7 @@ def get_scores(team_stats, team, num_rounds):
 
 def calculate_final_scores(history):
 	import sys
-	print(f"history = {history}", file=sys.stderr)
+	debug_print(f"history = {history}")
 	
 
 	ts = get_team_stats(history)
@@ -355,4 +365,4 @@ if __name__ == "__main__":
 
 	final_scores = calculate_final_scores(history)
 
-	print(f"fs: {final_scores}")
+	debug_print(f"fs: {final_scores}")

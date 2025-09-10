@@ -2,12 +2,22 @@
 Simple TOML-based user configuration loader for WebControl
 
 This module loads user accounts from a TOML configuration file
-and provides them in the format expected by the authentication system.
+and provides them in the         display_name = board_config.get("display_name")
+        debug_print(f"get_board_display_name({board_id}) -> '{display_name}'")
+        return display_namemat expected by the authentication system.
 """
 
 import toml
 import os
 from typing import List, Dict, Any, Optional
+
+# Global debug flag from environment variable
+DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
+
+def debug_print(message):
+    """Print debug message only if DEBUG is enabled"""
+    if DEBUG:
+        print(f"DEBUG: {message}")
 
 class UserConfig:
     """Simple user configuration loader"""
@@ -30,6 +40,14 @@ class UserConfig:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     self.config = toml.load(f)
                 print(f"✓ Loaded user configuration from {self.config_file}")
+                
+                # Debug logging for boards with display names
+                boards = self.config.get("boards", {})
+                debug_print(f"Loaded {len(boards)} board configurations:")
+                for board_id, board_info in boards.items():
+                    display_name = board_info.get("display_name", "NOT SET")
+                    debug_print(f"  - {board_id}: display_name = '{display_name}'")
+                    
             else:
                 print(f"⚠️  Configuration file not found: {self.config_file}")
                 print("Using default configuration")
@@ -129,6 +147,14 @@ class UserConfig:
     def get_groups(self) -> Dict[str, Any]:
         """Get group configuration"""
         return self.config.get("groups", {})
+    
+    def get_board_display_name(self, board_id: str) -> Optional[str]:
+        """Get the display name for a board from configuration"""
+        boards = self.config.get("boards", {})
+        board_info = boards.get(board_id, {})
+        display_name = board_info.get("display_name")
+        print(f"DEBUG: get_board_display_name({board_id}) -> '{display_name}'")
+        return display_name
     
     def reload(self):
         """Reload configuration from file"""

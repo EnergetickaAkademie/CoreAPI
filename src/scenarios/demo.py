@@ -1,4 +1,8 @@
 from enak.Enak import *
+import os
+
+# Global debug flag from environment variable
+DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
 
 building_consumptions = {
 	#these numbers define the (day, night) consumption of the specific buildings
@@ -37,7 +41,7 @@ source_productions = {
 def getScript():
 	script = Script(building_consumptions, source_productions)
 
-	script.setVerbose(True)
+	script.setVerbose(DEBUG)
 
 	#FÁZE 1 - prezentace
 	sr = SlideRange(["demo/outputname-01.png", "demo/outputname-02.png", "demo/outputname-03.png"])

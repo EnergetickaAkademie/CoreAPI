@@ -17,6 +17,14 @@ from enak import Enak, Source
 from MeritOrder import Power
 from scoring import calculate_final_scores
 
+# Global debug flag from environment variable
+DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
+
+def debug_print(message):
+    """Print debug message only if DEBUG is enabled"""
+    if DEBUG:
+        print(f"DEBUG: {message}")
+
 def convert_numpy_types(obj):
     """Convert NumPy types to native Python types for JSON serialization"""
     if isinstance(obj, np.integer):
@@ -1197,9 +1205,28 @@ def get_game_statistics():
     # Convert any NumPy types to JSON-serializable types
     game_statistics = convert_numpy_types(game_statistics)
     
+    # Create board names mapping for frontend
+    from user_config import get_user_config
+    board_names = {}
+    try:
+        user_config = get_user_config()
+        if user_config and user_config.config and 'boards' in user_config.config:
+            for board_id in user_config.config['boards'].keys():
+                display_name = user_config.get_board_display_name(board_id)
+                if display_name:
+                    # Map both "board1" and "1" to handle different board_id formats
+                    board_names[board_id] = display_name
+                    # Extract numeric part (e.g., "board1" -> "1")
+                    if board_id.startswith('board'):
+                        numeric_id = board_id[5:]  # Remove "board" prefix
+                        board_names[numeric_id] = display_name
+    except Exception as e:
+        debug_print(f"Error creating board names mapping for statistics: {e}")
+    
     return jsonify({
         "success": True,
         "game_statistics": game_statistics,
+        "board_names": board_names,
         "game_status": {
             "current_round": script.current_round_index if script else 0,
             "total_rounds": len(script.rounds) if script else 0,
@@ -1291,8 +1318,38 @@ def poll_for_users():
     
     all_boards = []
     
+    # Get connected boards
     for board_id, board in user_game_state.boards.items():
         all_boards.append(board.to_dict())
+    
+    # Add placeholder entries for configured but not connected boards
+    from user_config import get_user_config
+    try:
+        user_config = get_user_config()
+        if user_config and user_config.config and 'boards' in user_config.config:
+            connected_board_ids = set(user_game_state.boards.keys())
+            for config_board_id in user_config.config['boards'].keys():
+                # Extract numeric ID (e.g., "board1" -> "1") 
+                numeric_id = config_board_id[5:] if config_board_id.startswith('board') else config_board_id
+                if numeric_id not in connected_board_ids:
+                    # Create placeholder for disconnected board
+                    placeholder_board = {
+                        'board_id': numeric_id,
+                        'connected': False,
+                        'consumption': 0,
+                        'production': 0,
+                        'connected_consumption': [],
+                        'connected_production': [],
+                        'connected_buildings': [],
+                        'last_updated': None,
+                        'current_round_index': 0,
+                        'consumption_history': [],
+                        'production_history': [],
+                        'display_name': user_config.get_board_display_name(config_board_id) or f"Tým {numeric_id}"
+                    }
+                    all_boards.append(placeholder_board)
+    except Exception as e:
+        debug_print(f"Error adding placeholder boards: {e}")
     
     # Parse user metadata
     user = getattr(request, 'user', {})
@@ -1354,6 +1411,24 @@ def poll_for_users():
                 if hasattr(current_round, 'getSlides'):
                     round_details["slides"] = current_round.getSlides()
     
+    # Create board names mapping
+    from user_config import get_user_config
+    board_names = {}
+    try:
+        user_config = get_user_config()
+        if user_config and user_config.config and 'boards' in user_config.config:
+            for board_id in user_config.config['boards'].keys():
+                display_name = user_config.get_board_display_name(board_id)
+                if display_name:
+                    # Map both "board1" and "1" to handle different board_id formats
+                    board_names[board_id] = display_name
+                    # Extract numeric part (e.g., "board1" -> "1")
+                    if board_id.startswith('board'):
+                        numeric_id = board_id[5:]  # Remove "board" prefix
+                        board_names[numeric_id] = display_name
+    except Exception as e:
+        debug_print(f"Error creating board names mapping: {e}")
+    
     return jsonify({
         "boards": all_boards,
         "connection_summary": connection_summary,
@@ -1367,7 +1442,8 @@ def poll_for_users():
             "user_id": user.get('user_id'),
             "username": user.get('username', 'Unknown')
         },
-        "round_details": round_details
+        "round_details": round_details,
+        "board_names": board_names
     })
 
 @app.route('/game/status', methods=['GET'])
