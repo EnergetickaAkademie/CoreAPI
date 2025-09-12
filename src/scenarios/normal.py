@@ -148,7 +148,6 @@ def normalScript():
 	# Scénář 1: zima, zataženo, sněží, je bezvětří
 	d = (Day()
 		.snowy()
-		.cloudy()
 		.calm()
 		.build())
 
@@ -159,7 +158,6 @@ def normalScript():
 
 	n = (Night()
 		.snowy()
-		.cloudy()
 		.calm()
 		.build())
 
