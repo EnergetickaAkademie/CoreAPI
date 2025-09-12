@@ -153,7 +153,6 @@ class UserConfig:
         boards = self.config.get("boards", {})
         board_info = boards.get(board_id, {})
         display_name = board_info.get("display_name")
-        print(f"DEBUG: get_board_display_name({board_id}) -> '{display_name}'")
         return display_name
     
     def reload(self):

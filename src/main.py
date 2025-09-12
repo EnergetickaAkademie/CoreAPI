@@ -336,7 +336,7 @@ DISPLAY_TRANSLATIONS = {
         'temperature': '25°',
         'icon_url': '/icons/01_SUNNY.svg',
         'background_image': 'url(/icons/bg_sunny.jpg)',
-        'wind_speed': '3 m/s',
+        'wind_speed': None,
         'show_wind': True,
         'effects': [
             {
@@ -349,10 +349,10 @@ DISPLAY_TRANSLATIONS = {
     },
     'PARTLY_CLOUDY': {
         'name': 'polojasno',
-        'temperature': '20°',
+        'temperature': '18°',
         'icon_url': '/icons/02_CLOUDY.svg',
         'background_image': 'url(/icons/bg_partly_cloudy.jpg)',
-        'wind_speed': '4 m/s',
+        'wind_speed': None,
         'show_wind': True,
         'effects': [
             {
@@ -368,7 +368,7 @@ DISPLAY_TRANSLATIONS = {
         'temperature': '15°',
         'icon_url': '/icons/03_OVERCAST.svg',
         'background_image': 'url(/icons/bg_cloudy.jpg)',
-        'wind_speed': '2 m/s',
+        'wind_speed': None,
         'show_wind': True,
         'effects': [
             {
@@ -381,7 +381,7 @@ DISPLAY_TRANSLATIONS = {
     },
     'WINDY': {
         'name': 'větrno',
-        'temperature': '18°',
+        'temperature': None,
         'icon_url': '/icons/09_WINDY.svg',
         'background_image': 'url(/icons/bg_windy.jpg)',
         'wind_speed': '14 m/s',
@@ -397,7 +397,7 @@ DISPLAY_TRANSLATIONS = {
     },
     'BREEZY': {
         'name': 'mírný vítr',
-        'temperature': '16°',
+        'temperature': None,
         'icon_url': '/icons/08_MODERATE-WIND.svg',
         'background_image': 'url(/icons/bg_breezy.jpg)',
         'wind_speed': '8 m/s',
@@ -413,11 +413,11 @@ DISPLAY_TRANSLATIONS = {
     },
     'CALM': {
         'name': 'bezvětří',
-        'temperature': '22°',
+        'temperature': None,
         'icon_url': '/icons/07_NO-WIND.svg',
         'background_image': 'url(/icons/bg_calm.jpg)',
         'wind_speed': '0 m/s',
-        'show_wind': False,
+        'show_wind': True,
         'effects': [
             {
                 'text': 'Větrné elektrárny nevyrábí',
@@ -432,7 +432,7 @@ DISPLAY_TRANSLATIONS = {
         'temperature': '12°',
         'icon_url': '/icons/04_RAINY.svg',
         'background_image': 'url(/icons/bg_rainy.jpg)',
-        'wind_speed': '6 m/s',
+        'wind_speed': None,
         'show_wind': True,
         'effects': []
     },
@@ -441,7 +441,7 @@ DISPLAY_TRANSLATIONS = {
         'temperature': '-2°',
         'icon_url': '/icons/05_SNOW.svg',
         'background_image': 'url(/icons/bg_snowy.jpg)',
-        'wind_speed': '4 m/s',
+        'wind_speed': None,
         'show_wind': True,
         'effects': [
             {
@@ -454,32 +454,32 @@ DISPLAY_TRANSLATIONS = {
     },
     'FOGGY': {
         'name': 'mlhavo',
-        'temperature': '8°',
+        'temperature': None,
         'icon_url': '/icons/06_FOG.svg',
         'background_image': 'url(/icons/bg_foggy.jpg)',
-        'wind_speed': '1 m/s',
+        'wind_speed': None,
         'show_wind': True,
         'effects': []
     },
     # Round types (fallback when no specific weather)
     'DAY': {
         'name': 'Den',
-        'temperature': f'{random.randint(15, 27)}°',
-        'weather_type': 'jasno',
+        'temperature': f'{random.randint(17, 24)}°',
+        'weather_type': 'den',
         'icon_url': '/icons/01_SUNNY.svg',
         'background_image': 'url(/icons/bg_day.jpg)',
-        'wind_speed': '5 m/s',
+        'wind_speed': f'{random.randint(0, 5)} m/s',
         'show_wind': True,
         'effects': []
     },
     'NIGHT': {
         'name': 'Noc',
-        'temperature': f'{random.randint(5, 17)}°',
+        'temperature': f'{random.randint(9, 18)}°',
         'weather_type': 'noc',
         'icon_url': '/icons/10_night.svg',
         'background_image': 'url(/icons/bg_night.jpg)',
-        'wind_speed': '2 m/s',
-        'show_wind': False,
+        'wind_speed': f'{random.randint(0, 5)} m/s',
+        'show_wind': True,
         'effects': [
             {
                 'text': 'Solární elektrárny nevyrábí',
@@ -544,6 +544,39 @@ def filter_effects_by_priority(display_data):
     filtered_display_data['effects'] = all_filtered_effects
     
     return filtered_display_data
+
+def apply_weather_fallbacks(display_data):
+    # """
+    # Apply fallback logic for temperature and wind_speed in weather data.
+    # If temperature or wind_speed is None, generate appropriate random values.
+    # """
+    # if not display_data:
+    #     return display_data
+    
+    # # Create a copy to avoid modifying the original
+    # result_data = display_data.copy()
+    
+    # # Apply temperature fallback only if temperature is None or empty
+    # if result_data.get('temperature') is None or result_data.get('temperature') == '':
+    #     # Generate random temperature based on round type
+    #     if result_data.get('name') == 'Den' or result_data.get('weather_type') == 'den':
+    #         result_data['temperature'] = f'{random.randint(15, 27)}°'
+    #     elif result_data.get('name') == 'Noc' or result_data.get('weather_type') == 'noc':
+    #         result_data['temperature'] = f'{random.randint(5, 17)}°'
+    #     else:
+    #         # Default fallback
+    #         result_data['temperature'] = '18°'
+        
+    #     debug_print(f"Generated random temperature: {result_data['temperature']}")
+    
+    # # Apply wind_speed fallback only if wind_speed is None or empty
+    # if result_data.get('wind_speed') is None or result_data.get('wind_speed') == '':
+    #     # Generate random wind speed
+    #     result_data['wind_speed'] = f'{random.randint(2, 8)} m/s'
+    #     debug_print(f"Generated random wind speed: {result_data['wind_speed']}")
+    
+    # return result_data
+    pass
 
 # Game state (backwards compatibility - will use group1 by default)
 game_state = group_manager.get_game_state('group1')
@@ -1092,33 +1125,67 @@ def next_round():
             }
             
             # Add display data for weather/round information
-            round_key = round_type.name  # 'DAY' or 'NIGHT'
-            
-            # Check if there's specific weather data in the script
             current_round_obj = script.getCurrentRound()
-            weather_key = None
             
-            # Try to get weather from the round object
+            # Get weather conditions from the round
+            weather_conditions = []
             if hasattr(current_round_obj, 'weather') and current_round_obj.weather:
-                if isinstance(current_round_obj.weather, list) and len(current_round_obj.weather) > 0:
-                    weather_key = current_round_obj.weather[0].name.upper()
-                elif hasattr(current_round_obj.weather, 'upper'):
-                    weather_key = current_round_obj.weather.upper()
+                if isinstance(current_round_obj.weather, list):
+                    weather_conditions = current_round_obj.weather
+                else:
+                    weather_conditions = [current_round_obj.weather]
             elif hasattr(current_round_obj, 'getWeather') and current_round_obj.getWeather():
                 weather_data = current_round_obj.getWeather()
-                if isinstance(weather_data, list) and len(weather_data) > 0:
-                    weather_key = weather_data[0].name.upper()
-                elif hasattr(weather_data, 'upper'):
-                    weather_key = weather_data.upper()
+                if isinstance(weather_data, list):
+                    weather_conditions = weather_data
+                else:
+                    weather_conditions = [weather_data]
             
-            # Use specific weather data if available, otherwise fall back to generic round data
-            if weather_key and weather_key in DISPLAY_TRANSLATIONS:
-                display_data = DISPLAY_TRANSLATIONS[weather_key].copy()
-            else:
-                display_data = DISPLAY_TRANSLATIONS[round_key].copy()
-            
-            # Filter effects to show only highest priority for each power plant type
-            display_data = filter_effects_by_priority(display_data)
+            # Start with base round type data
+            round_key = round_type.name
+            display_data = DISPLAY_TRANSLATIONS[round_key].copy()
+
+            # Apply specific weather data if available
+            if weather_conditions:
+                # Use the first weather condition for primary display (icon, name, background, etc.)
+                primary_weather = weather_conditions[0]
+                weather_key = primary_weather.name.upper() if hasattr(primary_weather, 'name') else str(primary_weather).upper()
+                
+                if weather_key in DISPLAY_TRANSLATIONS:
+                    primary_weather_data = DISPLAY_TRANSLATIONS[weather_key].copy()
+                    
+                    # Override base data with primary weather data (only if values exist)
+                    for key, value in primary_weather_data.items():
+                        if value is not None and key != 'effects':  # Don't override effects yet
+                            display_data[key] = value
+                    
+                    # Set the weather name from the primary condition
+                    display_data['name'] = primary_weather_data.get('name', display_data['name'])
+                
+                # Now process all weather conditions to collect specific values
+                # This ensures we get wind speed from CALM even if it's not the first condition
+                for weather in weather_conditions:
+                    w_key = weather.name.upper() if hasattr(weather, 'name') else str(weather).upper()
+                    if w_key in DISPLAY_TRANSLATIONS:
+                        weather_data = DISPLAY_TRANSLATIONS[w_key].copy()
+                        
+                        # For specific fields, always take the value if it exists
+                        # This ensures CALM's wind_speed overrides any previous value
+                        if weather_data.get('wind_speed') is not None:
+                            display_data['wind_speed'] = weather_data['wind_speed']
+                        
+                        if weather_data.get('temperature') is not None:
+                            display_data['temperature'] = weather_data['temperature']
+                        
+                        # Collect effects from all weather conditions
+                        if 'effects' in weather_data:
+                            if 'effects' not in display_data:
+                                display_data['effects'] = []
+                            display_data['effects'].extend(weather_data['effects'])
+                
+                # Filter effects by priority
+                if 'effects' in display_data:
+                    display_data['effects'] = filter_effects_by_priority({'effects': display_data['effects']})['effects']
             
             response_data["display_data"] = display_data
         
@@ -1400,6 +1467,62 @@ def poll_for_users():
                 
                 if building_modifiers:
                     round_details["building_consumptions"] = building_modifiers
+                
+                # Add display data for weather/round information (same logic as next_round)
+                weather_conditions = []
+                if hasattr(current_round, 'weather') and current_round.weather:
+                    if isinstance(current_round.weather, list):
+                        weather_conditions = current_round.weather
+                    else:
+                        weather_conditions = [current_round.weather]
+                
+                # Start with base round type data
+                round_key = round_type.name
+                display_data = DISPLAY_TRANSLATIONS[round_key].copy()
+
+                # Apply specific weather data if available
+                if weather_conditions:
+                    # Use the first weather condition for primary display (icon, name, background, etc.)
+                    primary_weather = weather_conditions[0]
+                    weather_key = primary_weather.name.upper() if hasattr(primary_weather, 'name') else str(primary_weather).upper()
+                    
+                    if weather_key in DISPLAY_TRANSLATIONS:
+                        primary_weather_data = DISPLAY_TRANSLATIONS[weather_key].copy()
+                        
+                        # Override base data with primary weather data (only if values exist)
+                        for key, value in primary_weather_data.items():
+                            if value is not None and key != 'effects':  # Don't override effects yet
+                                display_data[key] = value
+                        
+                        # Set the weather name from the primary condition
+                        display_data['name'] = primary_weather_data.get('name', display_data['name'])
+                    
+                    # Now process all weather conditions to collect specific values
+                    # This ensures we get wind speed from CALM even if it's not the first condition
+                    for weather in weather_conditions:
+                        w_key = weather.name.upper() if hasattr(weather, 'name') else str(weather).upper()
+                        if w_key in DISPLAY_TRANSLATIONS:
+                            weather_data = DISPLAY_TRANSLATIONS[w_key].copy()
+                            
+                            # For specific fields, always take the value if it exists
+                            # This ensures CALM's wind_speed overrides any previous value
+                            if weather_data.get('wind_speed') is not None:
+                                display_data['wind_speed'] = weather_data['wind_speed']
+                            
+                            if weather_data.get('temperature') is not None:
+                                display_data['temperature'] = weather_data['temperature']
+                            
+                            # Collect effects from all weather conditions
+                            if 'effects' in weather_data:
+                                if 'effects' not in display_data:
+                                    display_data['effects'] = []
+                                display_data['effects'].extend(weather_data['effects'])
+                    
+                    # Filter effects by priority
+                    if 'effects' in display_data:
+                        display_data['effects'] = filter_effects_by_priority({'effects': display_data['effects']})['effects']
+                
+                round_details["display_data"] = display_data
             
             # Add slide information for Slide rounds
             elif round_type == Enak.RoundType.SLIDE:

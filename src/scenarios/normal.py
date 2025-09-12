@@ -142,6 +142,9 @@ def normalScript():
 
 	script.addRound(n)
 
+	sl = Slide("normal/snowy.svg")
+	script.addRound(sl)
+
 	# Scénář 1: zima, zataženo, sněží, je bezvětří
 	d = (Day()
 		.snowy()
@@ -163,7 +166,7 @@ def normalScript():
 	script.addRound(n)
 
 
-	sl = Slide("normal/29.svg")
+	sl = Slide("normal/39.svg")
 	script.addRound(sl)
 
 	#scénář 2: MS v hokeji, porucha plyn elektrárny
@@ -192,8 +195,7 @@ def normalScript():
 
 	sr = SlideRange(["normal/36.svg",
 					"normal/37.svg",
-					"normal/38.svg",
-					"normal/39.svg",])
+					"normal/38.svg"])
 
 	script.addRound(sr)
 
