@@ -624,12 +624,9 @@ def poll_binary():
     try:
         # Get board ID from authentication (from JWT username)
         user = getattr(request, 'user', {})
-        username = user.get('username', '')
+        board_id = user.get('username', '')
         
-        # Extract board ID from username
-        if username.startswith('board'):
-            board_id = username[5:]  # Remove 'board' prefix
-        else:
+        if not board_id:
             return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
         
         # Get user's game state
@@ -755,12 +752,9 @@ def post_values():
         print(f"Received production: {production}, consumption: {consumption}, buildings: {len(connected_buildings)}", file=sys.stderr)
         # Get board ID from authentication (from JWT username)
         user = getattr(request, 'user', {})
-        username = user.get('username', '')
+        board_id = user.get('username', '')
         
-        # Extract board ID from username (assuming username is like 'board1', 'board2', etc.)
-        if username.startswith('board'):
-            board_id = username[5:]  # Remove 'board' prefix
-        else:
+        if not board_id:
             return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
         
         # Get user's game state
@@ -820,12 +814,9 @@ def post_production_connected():
         
         # Get board ID from authentication (from JWT username)
         user = getattr(request, 'user', {})
-        username = user.get('username', '')
+        board_id = user.get('username', '')
         
-        # Extract board ID from username
-        if username.startswith('board'):
-            board_id = username[5:]  # Remove 'board' prefix
-        else:
+        if not board_id:
             return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
         
         # Get user's game state
@@ -904,12 +895,9 @@ def post_consumption_connected():
         
         # Get board ID from authentication (from JWT username)
         user = getattr(request, 'user', {})
-        username = user.get('username', '')
+        board_id = user.get('username', '')
         
-        # Extract board ID from username
-        if username.startswith('board'):
-            board_id = username[5:]  # Remove 'board' prefix
-        else:
+        if not board_id:
             return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
         
         # Get user's game state
@@ -935,13 +923,10 @@ def register():
     try:
         # Extract board ID from JWT token, not from request data
         user = getattr(request, 'user', {})
-        username = user.get('username', '')
+        board_id = user.get('username', '')
         
-        # Extract board ID from username (e.g., 'board1' -> '1')
-        if username.startswith('board'):
-            board_id = username[5:]  # Remove 'board' prefix
-        else:
-            logger.error(f"Invalid board username in register: {username}")
+        if not board_id:
+            logger.error(f"Invalid board username in register: {board_id}")
             response = BoardBinaryProtocol.pack_registration_response(False, "Invalid board authentication")
             return response, 400, {'Content-Type': 'application/octet-stream'}
         
