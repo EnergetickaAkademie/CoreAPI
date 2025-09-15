@@ -264,6 +264,13 @@ class BoardState:
         """
         return time.time() - self.last_updated
 
+    def update_last_activity(self):
+        """
+        Updates the last activity timestamp to mark board as active.
+        This should be called for any board communication (polling or posting).
+        """
+        self.last_updated = time.time()
+
     def update_power(self, production: int, consumption: int, script: 'Script' = None):
         """
         Updates the power production and consumption for the board.
@@ -276,7 +283,7 @@ class BoardState:
         # Update current values
         self.production = production
         self.consumption = consumption
-        self.last_updated = time.time()
+        self.update_last_activity()
 
     def save_current_round_to_history(self, script: 'Script' = None):
         """
@@ -405,7 +412,7 @@ class BoardState:
         Updates the power generation for a specific power plant type.
         """
         self.power_generation_by_type[power_type] = generation
-        self.last_updated = time.time()
+        self.update_last_activity()
 
     def get_power_generation_by_type(self, power_type: str) -> float:
         """
@@ -424,7 +431,7 @@ class BoardState:
         Sets multiple power generation values at once.
         """
         self.power_generation_by_type.update(generation_data)
-        self.last_updated = time.time()
+        self.update_last_activity()
 
     def add_connected_building(self, uid: str, building_type: int):
         """
@@ -433,14 +440,14 @@ class BoardState:
         # Remove if already exists
         self.connected_buildings = [b for b in self.connected_buildings if b['uid'] != uid]
         self.connected_buildings.append({'uid': uid, 'building_type': building_type})
-        self.last_updated = time.time()
+        self.update_last_activity()
 
     def remove_connected_building(self, uid: str):
         """
         Remove a connected building from the board state.
         """
         self.connected_buildings = [b for b in self.connected_buildings if b['uid'] != uid]
-        self.last_updated = time.time()
+        self.update_last_activity()
 
     def get_connected_buildings(self) -> List[Dict[str, Any]]:
         """
@@ -453,7 +460,7 @@ class BoardState:
         Clear all connected buildings (e.g., when game ends).
         """
         self.connected_buildings = []
-        self.last_updated = time.time()
+        self.update_last_activity()
 
     def reset_for_new_game(self):
         """Reset transient state for a fresh scenario while keeping identity.
@@ -477,7 +484,7 @@ class BoardState:
         self.current_round_index = -1
         self.power_generation_by_type.clear()
         self.connected_buildings = []
-        self.last_updated = time.time()
+        self.update_last_activity()
 
     def to_dict(self):
         """

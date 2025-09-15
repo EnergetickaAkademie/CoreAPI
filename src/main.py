@@ -635,6 +635,9 @@ def poll_binary():
         board = user_game_state.get_board(board_id)
         if not board:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
+
+        # Update last activity to mark board as active (for liveliness detection)
+        board.update_last_activity()
         
         script = user_game_state.get_script()
         if not script or script.current_round_index >= len(script.rounds):
@@ -679,8 +682,20 @@ def poll_binary():
 def get_production_values():
     """Binary endpoint - Get power plant production ranges"""
     try:
+        # Get board ID from authentication (from JWT username)
+        user = getattr(request, 'user', {})
+        board_id = user.get('username', '')
+        
+        if not board_id:
+            return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
+
         # Get user's game state
         user_game_state = get_user_game_state(request.user)
+        
+        # Get the board and update last activity for liveliness detection
+        board = user_game_state.get_board(board_id)
+        if board:
+            board.update_last_activity()
         
         script = user_game_state.get_script()
         if not script:
@@ -712,8 +727,20 @@ def get_production_values():
 def get_consumption_values():
     """Binary endpoint - Get consumer consumption values"""
     try:
+        # Get board ID from authentication (from JWT username)
+        user = getattr(request, 'user', {})
+        board_id = user.get('username', '')
+        
+        if not board_id:
+            return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
+
         # Get user's game state
         user_game_state = get_user_game_state(request.user)
+        
+        # Get the board and update last activity for liveliness detection
+        board = user_game_state.get_board(board_id)
+        if board:
+            board.update_last_activity()
         
         script = user_game_state.get_script()
         if not script:
@@ -934,7 +961,10 @@ def register():
         user_game_state = get_user_game_state(request.user)
         
         # Register the board (no need to validate board_id since it comes from verified JWT)
-        user_game_state.register_board(board_id)
+        board = user_game_state.register_board(board_id)
+        
+        # Update last activity to mark board as active (for liveliness detection)
+        board.update_last_activity()
         
         logger.info(f"Board {board_id} registered successfully")
         response = BoardBinaryProtocol.pack_registration_response(True, "Registration successful")
