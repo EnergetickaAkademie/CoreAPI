@@ -57,8 +57,8 @@ def getScript():
 	script.addRound(sl)
 
 	d = (Day()
-		.windy()
 		.sunny()
+		.windy()
 		.build())
 
 	script.addRound(d)

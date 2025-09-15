@@ -41,7 +41,7 @@ def normalScript():
 
 	#FÁZE 1 - prezentace
 	sr = SlideRange(["demo/outputname-01.png",
-					"demo/outputname-02.png",
+					#"demo/outputname-02.png",
 					"normal/03.svg",
 					"normal/04.svg",
 					"normal/05.svg",
@@ -127,8 +127,8 @@ def normalScript():
 	script.allowProduction(Source.BATTERY)
 
 	d = (Day()
-		.windy()
 		.sunny()
+		.windy()
 		.build())
 
 	script.addRound(d)
