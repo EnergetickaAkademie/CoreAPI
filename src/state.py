@@ -10,6 +10,7 @@ from enak import Enak, Script
 from scenarios.demo import getScript
 from scenarios.normal import normalScript
 from scenarios.test import getScript as getTestScript
+from scenarios.short import getScript as shortScript
 from user_config import get_user_config
 
 # Global debug flag from environment variable
@@ -25,7 +26,8 @@ def debug_print(message):
 available_script_generators: Dict[str, Callable[[], Script]] = {
     "demo": getScript,
     "test": getTestScript,
-    "normal": normalScript
+    "normal": normalScript,
+    "short": shortScript
 }
 
 # Backwards compatibility - generate instances on demand
