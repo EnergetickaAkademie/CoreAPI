@@ -1381,12 +1381,11 @@ def poll_for_users():
         if user_config and user_config.config and 'boards' in user_config.config:
             connected_board_ids = set(user_game_state.boards.keys())
             for config_board_id in user_config.config['boards'].keys():
-                # Extract numeric ID (e.g., "board1" -> "1") 
-                numeric_id = config_board_id[5:] if config_board_id.startswith('board') else config_board_id
-                if numeric_id not in connected_board_ids:
+                # Use the full config_board_id as the board_id (no more parsing)
+                if config_board_id not in connected_board_ids:
                     # Create placeholder for disconnected board
                     placeholder_board = {
-                        'board_id': numeric_id,
+                        'board_id': config_board_id,
                         'connected': False,
                         'consumption': 0,
                         'production': 0,
@@ -1397,7 +1396,7 @@ def poll_for_users():
                         'current_round_index': 0,
                         'consumption_history': [],
                         'production_history': [],
-                        'display_name': user_config.get_board_display_name(config_board_id) or f"Tým {numeric_id}"
+                        'display_name': user_config.get_board_display_name(config_board_id) or f"Team {config_board_id}"
                     }
                     all_boards.append(placeholder_board)
     except Exception as e:
