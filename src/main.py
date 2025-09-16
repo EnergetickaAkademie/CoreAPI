@@ -16,6 +16,7 @@ from binary_protocol import BoardBinaryProtocol, BinaryProtocolError
 from enak import Enak, Source
 from MeritOrder import Power
 from scoring import calculate_final_scores
+from weather_messages import WeatherMessageHandler
 
 # Global debug flag from environment variable
 DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
@@ -470,7 +471,14 @@ DISPLAY_TRANSLATIONS = {
         'background_image': 'url(/icons/bg_day.jpg)',
         'wind_speed': f'{random.randint(0, 5)} m/s',
         'show_wind': True,
-        'effects': []
+        'effects': [
+            {
+                'text': 'Větrné elektrárny nevyrábí',
+                'icon_url': '/icons/DASH_windPP.svg',
+                'type': Source.WIND.value,
+                'priority': 2
+            }
+        ]
     },
     'NIGHT': {
         'name': 'Noc',
@@ -484,12 +492,21 @@ DISPLAY_TRANSLATIONS = {
             {
                 'text': 'Solární elektrárny nevyrábí',
                 'icon_url': '/icons/DASH_solarPP.svg',
-                'type' :  Source.PHOTOVOLTAIC.value,
-                'priority' : 2
+                'type': Source.PHOTOVOLTAIC.value,
+                'priority': 2
             },
+            {
+                'text': 'Větrné elektrárny nevyrábí',
+                'icon_url': '/icons/DASH_windPP.svg',
+                'type': Source.WIND.value,
+                'priority': 2
+            }
         ]
     }
 }
+
+# Initialize weather message handler
+weather_message_handler = WeatherMessageHandler(DISPLAY_TRANSLATIONS)
 
 # Helper function to get game state for current user
 def get_user_game_state(user_info: dict) -> GameState:
@@ -1146,7 +1163,7 @@ def next_round():
                 "consumption_modifiers": cons_modifiers
             }
             
-            # Add display data for weather/round information
+            # Add display data for weather/round information using WeatherMessageHandler
             current_round_obj = script.getCurrentRound()
             
             # Get weather conditions from the round
@@ -1163,51 +1180,10 @@ def next_round():
                 else:
                     weather_conditions = [weather_data]
             
-            # Start with base round type data
-            round_key = round_type.name
-            display_data = DISPLAY_TRANSLATIONS[round_key].copy()
-
-            # Apply specific weather data if available
-            if weather_conditions:
-                # Use the first weather condition for primary display (icon, name, background, etc.)
-                primary_weather = weather_conditions[0]
-                weather_key = primary_weather.name.upper() if hasattr(primary_weather, 'name') else str(primary_weather).upper()
-                
-                if weather_key in DISPLAY_TRANSLATIONS:
-                    primary_weather_data = DISPLAY_TRANSLATIONS[weather_key].copy()
-                    
-                    # Override base data with primary weather data (only if values exist)
-                    for key, value in primary_weather_data.items():
-                        if value is not None and key != 'effects':  # Don't override effects yet
-                            display_data[key] = value
-                    
-                    # Set the weather name from the primary condition
-                    display_data['name'] = primary_weather_data.get('name', display_data['name'])
-                
-                # Now process all weather conditions to collect specific values
-                # This ensures we get wind speed from CALM even if it's not the first condition
-                for weather in weather_conditions:
-                    w_key = weather.name.upper() if hasattr(weather, 'name') else str(weather).upper()
-                    if w_key in DISPLAY_TRANSLATIONS:
-                        weather_data = DISPLAY_TRANSLATIONS[w_key].copy()
-                        
-                        # For specific fields, always take the value if it exists
-                        # This ensures CALM's wind_speed overrides any previous value
-                        if weather_data.get('wind_speed') is not None:
-                            display_data['wind_speed'] = weather_data['wind_speed']
-                        
-                        if weather_data.get('temperature') is not None:
-                            display_data['temperature'] = weather_data['temperature']
-                        
-                        # Collect effects from all weather conditions
-                        if 'effects' in weather_data:
-                            if 'effects' not in display_data:
-                                display_data['effects'] = []
-                            display_data['effects'].extend(weather_data['effects'])
-                
-                # Filter effects by priority
-                if 'effects' in display_data:
-                    display_data['effects'] = filter_effects_by_priority({'effects': display_data['effects']})['effects']
+            # Use WeatherMessageHandler to generate display data with proper message logic
+            display_data = weather_message_handler.generate_weather_display_data(
+                round_type, weather_conditions, script
+            )
             
             response_data["display_data"] = display_data
         
@@ -1489,7 +1465,7 @@ def poll_for_users():
                 if building_modifiers:
                     round_details["building_consumptions"] = building_modifiers
                 
-                # Add display data for weather/round information (same logic as next_round)
+                # Add display data for weather/round information using WeatherMessageHandler
                 weather_conditions = []
                 if hasattr(current_round, 'weather') and current_round.weather:
                     if isinstance(current_round.weather, list):
@@ -1497,58 +1473,10 @@ def poll_for_users():
                     else:
                         weather_conditions = [current_round.weather]
                 
-                # Start with base round type data
-                round_key = round_type.name
-                display_data = DISPLAY_TRANSLATIONS[round_key].copy()
-
-                # Apply specific weather data if available
-                if weather_conditions:
-                    # Use the first weather condition for primary display (icon, name, background, etc.)
-                    primary_weather = weather_conditions[0]
-                    weather_key = primary_weather.name.upper() if hasattr(primary_weather, 'name') else str(primary_weather).upper()
-                    
-                    if weather_key in DISPLAY_TRANSLATIONS:
-                        primary_weather_data = DISPLAY_TRANSLATIONS[weather_key].copy()
-                        
-                        # Override base data with primary weather data (only if values exist)
-                        for key, value in primary_weather_data.items():
-                            if value is not None and key != 'effects':  # Don't override effects yet
-                                display_data[key] = value
-                        
-                        # Set the weather name from the primary condition
-                        display_data['name'] = primary_weather_data.get('name', display_data['name'])
-                    
-                    # Process all weather conditions in order to build last-wins per-plant effects.
-                    effect_by_type = {}  # type(int) -> effect dict
-                    for weather in weather_conditions:
-                        w_key = weather.name.upper() if hasattr(weather, 'name') else str(weather).upper()
-                        if w_key not in DISPLAY_TRANSLATIONS:
-                            continue
-                        weather_data = DISPLAY_TRANSLATIONS[w_key].copy()
-
-                        # Always override scalar display fields when provided (order decides precedence)
-                        if weather_data.get('wind_speed') is not None:
-                            display_data['wind_speed'] = weather_data['wind_speed']
-                        if weather_data.get('temperature') is not None:
-                            display_data['temperature'] = weather_data['temperature']
-
-                        # Last-wins mapping for power plant effects
-                        for eff in weather_data.get('effects', []) or []:
-                            eff_type = eff.get('type')
-                            if eff_type is None:
-                                # Non-typed effects are appended (rare); keep only last textual duplicate
-                                # Use a pseudo key based on text to deduplicate
-                                pseudo_key = f"text::{eff.get('text','')}"
-                                effect_by_type[pseudo_key] = eff
-                            else:
-                                effect_by_type[eff_type] = eff
-
-                    # Replace effects array with deterministic ordering: typed effects sorted by type id, then any pseudo keys.
-                    if effect_by_type:
-                        typed = [e for k, e in effect_by_type.items() if not isinstance(k, str)]
-                        pseudo = [e for k, e in effect_by_type.items() if isinstance(k, str)]
-                        typed.sort(key=lambda e: e.get('type', 0))
-                        display_data['effects'] = typed + pseudo
+                # Use WeatherMessageHandler to generate display data with proper message logic
+                display_data = weather_message_handler.generate_weather_display_data(
+                    round_type, weather_conditions, script
+                )
                 
                 round_details["display_data"] = display_data
             
