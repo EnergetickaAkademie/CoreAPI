@@ -1207,9 +1207,14 @@ def next_round():
         user_game_state.finalize_all_boards_current_round()
         # prune stale / disconnected boards to free memory
         user_game_state.prune_disconnected_boards()
-        
-        # Generate game statistics for display
+        # Generate game statistics for display (requires script metadata)
         game_statistics = generate_game_statistics(user_game_state)
+
+        # Mark game as ended: clear active script so polling/reporting shows inactive
+        try:
+            user_game_state.script = None
+        except Exception:
+            pass
         
         return jsonify({
             "status": "game_finished", 
@@ -1529,7 +1534,7 @@ def poll_for_users():
             "current_round": script.current_round_index if script else 0,
             "total_rounds": len(script.rounds) if script else 0,
             "round_type": script.getCurrentRoundType().value if script and script.getCurrentRoundType() else None,
-            "game_active": is_game_active(script)
+            "game_active": is_game_active(script) if script else False
         },
         "lecturer_info": {
             "user_id": user.get('user_id'),
@@ -1550,7 +1555,7 @@ def game_status():
         "current_round": script.current_round_index if script else 0,
         "total_rounds": len(script.rounds) if script else 0,
         "round_type": script.getCurrentRoundType().value if script and script.getCurrentRoundType() else None,
-        "game_active": is_game_active(script),
+        "game_active": is_game_active(script) if script else False,
         "boards": len(user_game_state.boards)
     }
     
