@@ -528,12 +528,19 @@ def filter_effects_by_priority(display_data):
             effects_by_type[effect_type] = []
         effects_by_type[effect_type].append(effect)
     
-    # Keep only the highest priority effect for each power plant type
+    # Keep only one effect per power plant type.
+    # For most sources: higher numeric priority wins (severity model: 2 > 1 > 0).
+    # For WIND we want explicit WINDY / BREEZY conditions to override baseline CALM.
+    # Script builders often add a default CALM plus an overriding WINDY; previously CALM (priority 2)
+    # masked WINDY (priority 0). To fix this, for WIND we invert the ordering and pick the lowest number.
     filtered_power_plant_effects = []
     for effect_type, effects in effects_by_type.items():
-        # Sort by priority (higher number = higher priority)
-        effects.sort(key=lambda x: x.get('priority', 0), reverse=True)
-        # Take the first (highest priority) effect
+        if effect_type == Source.WIND.value:
+            # Ascending: 0 (full) preferred over 1 (half) over 2 (none)
+            effects.sort(key=lambda x: x.get('priority', 0))
+        else:
+            # Descending: 2 (none) preferred over 1 (half) over 0 (full)
+            effects.sort(key=lambda x: x.get('priority', 0), reverse=True)
         filtered_power_plant_effects.append(effects[0])
     
     # Combine filtered power plant effects with other effects (keep all other effects)
@@ -1511,30 +1518,37 @@ def poll_for_users():
                         # Set the weather name from the primary condition
                         display_data['name'] = primary_weather_data.get('name', display_data['name'])
                     
-                    # Now process all weather conditions to collect specific values
-                    # This ensures we get wind speed from CALM even if it's not the first condition
+                    # Process all weather conditions in order to build last-wins per-plant effects.
+                    effect_by_type = {}  # type(int) -> effect dict
                     for weather in weather_conditions:
                         w_key = weather.name.upper() if hasattr(weather, 'name') else str(weather).upper()
-                        if w_key in DISPLAY_TRANSLATIONS:
-                            weather_data = DISPLAY_TRANSLATIONS[w_key].copy()
-                            
-                            # For specific fields, always take the value if it exists
-                            # This ensures CALM's wind_speed overrides any previous value
-                            if weather_data.get('wind_speed') is not None:
-                                display_data['wind_speed'] = weather_data['wind_speed']
-                            
-                            if weather_data.get('temperature') is not None:
-                                display_data['temperature'] = weather_data['temperature']
-                            
-                            # Collect effects from all weather conditions
-                            if 'effects' in weather_data:
-                                if 'effects' not in display_data:
-                                    display_data['effects'] = []
-                                display_data['effects'].extend(weather_data['effects'])
-                    
-                    # Filter effects by priority
-                    if 'effects' in display_data:
-                        display_data['effects'] = filter_effects_by_priority({'effects': display_data['effects']})['effects']
+                        if w_key not in DISPLAY_TRANSLATIONS:
+                            continue
+                        weather_data = DISPLAY_TRANSLATIONS[w_key].copy()
+
+                        # Always override scalar display fields when provided (order decides precedence)
+                        if weather_data.get('wind_speed') is not None:
+                            display_data['wind_speed'] = weather_data['wind_speed']
+                        if weather_data.get('temperature') is not None:
+                            display_data['temperature'] = weather_data['temperature']
+
+                        # Last-wins mapping for power plant effects
+                        for eff in weather_data.get('effects', []) or []:
+                            eff_type = eff.get('type')
+                            if eff_type is None:
+                                # Non-typed effects are appended (rare); keep only last textual duplicate
+                                # Use a pseudo key based on text to deduplicate
+                                pseudo_key = f"text::{eff.get('text','')}"
+                                effect_by_type[pseudo_key] = eff
+                            else:
+                                effect_by_type[eff_type] = eff
+
+                    # Replace effects array with deterministic ordering: typed effects sorted by type id, then any pseudo keys.
+                    if effect_by_type:
+                        typed = [e for k, e in effect_by_type.items() if not isinstance(k, str)]
+                        pseudo = [e for k, e in effect_by_type.items() if isinstance(k, str)]
+                        typed.sort(key=lambda e: e.get('type', 0))
+                        display_data['effects'] = typed + pseudo
                 
                 round_details["display_data"] = display_data
             
