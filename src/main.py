@@ -88,13 +88,42 @@ def is_game_active(script) -> bool:
 class GroupGameManager:
     def __init__(self):
         self.group_game_states = {}
+        # Track explicit game end state per group to persist until new game starts
+        self.game_ended_states = {}
     
     def get_game_state(self, group_id: str) -> GameState:
         """Get or create game state for a specific group"""
         if group_id not in self.group_game_states:
             # Initialize with NO script - game is inactive by default
             self.group_game_states[group_id] = GameState(None)
+            self.game_ended_states[group_id] = False
         return self.group_game_states[group_id]
+    
+    def mark_game_ended(self, group_id: str):
+        """Mark game as explicitly ended for a group"""
+        self.game_ended_states[group_id] = True
+        debug_print(f"Game marked as ended for group {group_id}")
+    
+    def start_new_game(self, group_id: str, script):
+        """Start a new game for a group, clearing the ended state"""
+        game_state = self.get_game_state(group_id)
+        game_state.script = script
+        game_state.reset_for_new_game()
+        self.game_ended_states[group_id] = False
+        debug_print(f"New game started for group {group_id}, ended state cleared")
+    
+    def is_game_ended(self, group_id: str) -> bool:
+        """Check if game is explicitly marked as ended for a group"""
+        return self.game_ended_states.get(group_id, False)
+    
+    def is_game_active(self, group_id: str) -> bool:
+        """Check if game is active for a group - considers both script state and end state"""
+        if self.is_game_ended(group_id):
+            return False
+        
+        game_state = self.get_game_state(group_id)
+        script = game_state.get_script()
+        return is_game_active(script)
     
     def get_all_groups(self) -> list:
         """Get list of all group IDs"""
@@ -678,7 +707,10 @@ def poll_binary():
         board.update_last_activity()
         
         script = user_game_state.get_script()
-        if not is_game_active(script):
+        
+        # Check game activity using group manager (considers both script and ended state)
+        group_id = user.get('group_id', 'group1')
+        if not group_manager.is_game_active(group_id):
             # Return empty response when no game is active / game finished
             # This signals to ESP32 that game is paused/ended (gameActive = false)
             return b'', 200, {'Content-Type': 'application/octet-stream'}
@@ -1039,8 +1071,9 @@ def start_game_scenario():
     if scenario_id not in available_scripts:
         return jsonify({"error": "Invalid scenario ID"}), 400
     
-    # Get user's game state
-    user_game_state = get_user_game_state(request.user)
+    # Get user information for group management
+    user = getattr(request, 'user', {})
+    group_id = user.get('group_id', 'group1')
     
     # Get a fresh script instance to ensure clean state
     try:
@@ -1048,19 +1081,11 @@ def start_game_scenario():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     
-    # Reset existing per-board state (connected buildings, histories) so
-    # a quick restart does not leak previous game data.
-    try:
-        user_game_state.reset_for_new_game()
-    except Exception as e:
-        print(f"Warning: failed to reset boards for new game: {e}", file=sys.stderr)
-
-    # Set the script
-    user_game_state.script = script
+    # Start new game through group manager - this clears ended state and resets boards
+    group_manager.start_new_game(group_id, script)
     
     # DON'T automatically advance - let frontend decide when to start
     
-    user = getattr(request, 'user', {})
     lecturer_name = user.get('username', 'Unknown Lecturer')
     
     return jsonify({
@@ -1216,6 +1241,12 @@ def next_round():
         except Exception:
             pass
         
+        # Mark game as explicitly ended in the group manager
+        user = getattr(request, 'user', {})
+        group_id = user.get('group_id', 'group1')
+        group_manager.mark_game_ended(group_id)
+        debug_print(f"Game finished and marked as ended for group {group_id}")
+        
         return jsonify({
             "status": "game_finished", 
             "message": "All rounds completed", 
@@ -1256,6 +1287,10 @@ def get_statistics():
     # Get connection summary
     connection_summary = user_game_state.get_connection_summary()
     
+    # Get user group for accurate game status
+    user = getattr(request, 'user', {})
+    group_id = user.get('group_id', 'group1')
+    
     return jsonify({
         "success": True,
         "statistics": statistics,
@@ -1263,7 +1298,7 @@ def get_statistics():
         "game_status": {
             "current_round": script.current_round_index if script else 0,
             "total_rounds": len(script.rounds) if script else 0,
-            "game_active": is_game_active(script),
+            "game_active": group_manager.is_game_active(group_id),
             "scenario": script.__class__.__name__ if script else None
         }
     })
@@ -1527,6 +1562,10 @@ def poll_for_users():
     except Exception as e:
         debug_print(f"Error creating board names mapping: {e}")
     
+    # Get user group for game status
+    user = getattr(request, 'user', {})
+    group_id = user.get('group_id', 'group1')
+    
     return jsonify({
         "boards": all_boards,
         "connection_summary": connection_summary,
@@ -1534,7 +1573,7 @@ def poll_for_users():
             "current_round": script.current_round_index if script else 0,
             "total_rounds": len(script.rounds) if script else 0,
             "round_type": script.getCurrentRoundType().value if script and script.getCurrentRoundType() else None,
-            "game_active": is_game_active(script) if script else False
+            "game_active": group_manager.is_game_active(group_id)
         },
         "lecturer_info": {
             "user_id": user.get('user_id'),
@@ -1551,11 +1590,15 @@ def game_status():
     user_game_state = get_user_game_state(getattr(request, 'user', {'group_id': 'group1'}))
     script = user_game_state.get_script()
     
+    # Get group_id for game activity check
+    user = getattr(request, 'user', {'group_id': 'group1'})
+    group_id = user.get('group_id', 'group1')
+    
     base_status = {
         "current_round": script.current_round_index if script else 0,
         "total_rounds": len(script.rounds) if script else 0,
         "round_type": script.getCurrentRoundType().value if script and script.getCurrentRoundType() else None,
-        "game_active": is_game_active(script) if script else False,
+        "game_active": group_manager.is_game_active(group_id),
         "boards": len(user_game_state.boards)
     }
     
@@ -1581,7 +1624,7 @@ def health_check():
         "status": "healthy",
         "service": "CoreAPI",
         "boards_registered": len(default_game_state.boards),
-        "game_active": is_game_active(script),
+        "game_active": group_manager.is_game_active('group1'),
         "current_round": script.current_round_index if script else None
     })
 
