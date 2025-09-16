@@ -70,6 +70,20 @@ CORS(app, origins=['http://localhost'],
      allow_headers=['Content-Type', 'Authorization', 'X-Auth-Token'],
      supports_credentials=True)
 
+# Helper to determine if a script has an active round (avoids off-by-one issues)
+def is_game_active(script) -> bool:
+    """Return True if there's a current round to play.
+    Prefer getCurrentRoundType() over index math to avoid 1-based vs 0-based mismatches.
+    """
+    try:
+        return bool(script and script.getCurrentRoundType())
+    except Exception:
+        # Fallback to index check if method not available
+        try:
+            return bool(script and getattr(script, 'current_round_index', 0) < len(getattr(script, 'rounds', [])))
+        except Exception:
+            return False
+
 # Group-based game state management
 class GroupGameManager:
     def __init__(self):
@@ -664,7 +678,7 @@ def poll_binary():
         board.update_last_activity()
         
         script = user_game_state.get_script()
-        if not script or script.current_round_index >= len(script.rounds):
+        if not is_game_active(script):
             # Return empty response when no game is active / game finished
             # This signals to ESP32 that game is paused/ended (gameActive = false)
             return b'', 200, {'Content-Type': 'application/octet-stream'}
@@ -1244,7 +1258,7 @@ def get_statistics():
         "game_status": {
             "current_round": script.current_round_index if script else 0,
             "total_rounds": len(script.rounds) if script else 0,
-            "game_active": script is not None and script.current_round_index < len(script.rounds),
+            "game_active": is_game_active(script),
             "scenario": script.__class__.__name__ if script else None
         }
     })
@@ -1515,7 +1529,7 @@ def poll_for_users():
             "current_round": script.current_round_index if script else 0,
             "total_rounds": len(script.rounds) if script else 0,
             "round_type": script.getCurrentRoundType().value if script and script.getCurrentRoundType() else None,
-            "game_active": script is not None and script.current_round_index < len(script.rounds) if script else False
+            "game_active": is_game_active(script)
         },
         "lecturer_info": {
             "user_id": user.get('user_id'),
@@ -1536,7 +1550,7 @@ def game_status():
         "current_round": script.current_round_index if script else 0,
         "total_rounds": len(script.rounds) if script else 0,
         "round_type": script.getCurrentRoundType().value if script and script.getCurrentRoundType() else None,
-        "game_active": script is not None and script.current_round_index < len(script.rounds) if script else False,
+        "game_active": is_game_active(script),
         "boards": len(user_game_state.boards)
     }
     
@@ -1562,7 +1576,7 @@ def health_check():
         "status": "healthy",
         "service": "CoreAPI",
         "boards_registered": len(default_game_state.boards),
-        "game_active": script is not None and script.current_round_index < len(script.rounds) if script else False,
+        "game_active": is_game_active(script),
         "current_round": script.current_round_index if script else None
     })
 
