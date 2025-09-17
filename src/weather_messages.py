@@ -53,12 +53,15 @@ class WeatherMessageHandler:
         
         # Apply specific weather data if available
         if weather_conditions:
-            # Use the first weather condition for primary display (icon, name, background, etc.)
-            primary_weather = weather_conditions[0]
-            weather_key = primary_weather.name.upper() if hasattr(primary_weather, 'name') else str(primary_weather).upper()
+            # Process all weather conditions to build combined display data
+            # Later conditions can override earlier ones if they have non-None values
             
-            if weather_key in self.display_translations:
-                primary_weather_data = self.display_translations[weather_key].copy()
+            # First, use the first weather condition for primary display (icon, name, background, etc.)
+            primary_weather = weather_conditions[0]
+            primary_weather_key = primary_weather.name.upper() if hasattr(primary_weather, 'name') else str(primary_weather).upper()
+            
+            if primary_weather_key in self.display_translations:
+                primary_weather_data = self.display_translations[primary_weather_key].copy()
                 
                 # Override base data with primary weather data (only if values exist)
                 for key, value in primary_weather_data.items():
@@ -67,6 +70,19 @@ class WeatherMessageHandler:
                 
                 # Set the weather name from the primary condition
                 display_data['name'] = primary_weather_data.get('name', display_data['name'])
+            
+            # Then process all weather conditions to override specific values (like wind_speed, temperature)
+            # This allows later conditions to override values from earlier conditions or base round type
+            for weather in weather_conditions:
+                weather_key = weather.name.upper() if hasattr(weather, 'name') else str(weather).upper()
+                
+                if weather_key in self.display_translations:
+                    weather_data = self.display_translations[weather_key]
+                    
+                    # Override specific display properties if they have non-None values
+                    for key in ['wind_speed', 'temperature']:
+                        if weather_data.get(key) is not None:
+                            display_data[key] = weather_data[key]
         
         # Generate weather effects with proper filtering
         display_data['effects'] = self._generate_weather_effects(
