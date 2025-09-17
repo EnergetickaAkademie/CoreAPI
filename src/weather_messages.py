@@ -121,21 +121,16 @@ class WeatherMessageHandler:
         # 3. Convert back to sorted list
         return self._sort_effects(effect_by_type)
     
-    def _get_enabled_sources(self, script: Any) -> Set[int]:
-        """
-        Get the set of enabled powerplant source values.
-        
-        Args:
-            script: Game script containing master_production_coefficients
-            
-        Returns:
-            Set of source values that are enabled (coefficient > 0)
-        """
+    def _get_enabled_sources(self, script_instance):
+        """Get set of registered/unlocked source types in the game."""
         enabled_sources = set()
-        if hasattr(script, 'master_production_coefficients'):
-            for source, coeff in script.master_production_coefficients.items():
-                if coeff > 0:  # Only sources with coefficient > 0 are enabled
-                    enabled_sources.add(source.value)
+        
+        if script_instance:
+            registered_sources = script_instance.getRegisteredSources()
+            
+            for source in registered_sources:
+                enabled_sources.add(source.value)
+        
         return enabled_sources
     
     def _apply_effects(
@@ -173,9 +168,8 @@ class WeatherMessageHandler:
         """
         Determine if an effect should be included based on filtering rules.
         
-        The key fix: "Not producing" messages should always be shown for enabled powerplant types,
-        regardless of current production coefficient. Only positive production effects should be
-        filtered based on whether the source is currently enabled.
+        Only show effects for powerplant types that are currently enabled in the game.
+        If no powerplant types are enabled yet, show no effects.
         
         Args:
             effect: The effect dictionary
@@ -185,13 +179,7 @@ class WeatherMessageHandler:
         Returns:
             True if the effect should be included
         """
-        # If no sources are specified, include all effects (fallback)
-        if not enabled_sources:
-            return True
-        
-        # The effect is for a powerplant type that exists as an enabled source
-        # This means the powerplant type is available in the game, so we should
-        # show its status (whether producing or not producing)
+        # Only show effects for powerplant types that are enabled in the game
         return effect_type in enabled_sources
     
     def _sort_effects(self, effect_by_type: Dict) -> List[Dict[str, Any]]:
