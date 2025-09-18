@@ -8,9 +8,12 @@ import os
 from enak import Enak, Script
 
 from scenarios.demo import getScript
-from scenarios.normal import normalScript
+from scenarios.normal_long import getScript as getNormalLongScript
+from scenarios.normal_medium import getScript as getNormalMediumScript
+from scenarios.normal_short import getScript as getNormalShortScript
 from scenarios.test import getScript as getTestScript
-from scenarios.short import getScript as shortScript
+from scenarios.allon import getScript as getAllOnScript
+from scenarios.allon_outage import getScript as getAllOnOutageScript
 from user_config import get_user_config
 
 # Global debug flag from environment variable
@@ -21,13 +24,13 @@ def debug_print(message):
     if DEBUG:
         print(f"DEBUG: {message}")
 
-# Store script generator functions instead of instances
-# This ensures we get fresh scripts for each game
 available_script_generators: Dict[str, Callable[[], Script]] = {
-    "demo": getScript,
     "test": getTestScript,
-    "normal": normalScript,
-    "short": shortScript
+    "workshop - dlouhý": getNormalLongScript,
+    "workshop - střední": getNormalMediumScript,
+    "workshop - krátký": getNormalShortScript,
+    "konference - všechno": getAllOnScript,
+    "konference - výpadek": getAllOnOutageScript
 }
 
 # Backwards compatibility - generate instances on demand
