@@ -25,7 +25,7 @@ def debug_print(message):
         print(f"DEBUG: {message}")
 
 available_script_generators: Dict[str, Callable[[], Script]] = {
-    "test": getTestScript,
+    #"test": getTestScript,
     "workshop - dlouhý": getNormalLongScript,
     "workshop - střední": getNormalMediumScript,
     "workshop - krátký": getNormalShortScript,
