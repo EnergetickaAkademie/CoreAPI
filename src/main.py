@@ -1435,6 +1435,9 @@ def poll_for_users():
     user_game_state = get_user_game_state(request.user)
     script = user_game_state.get_script()
     
+    # Prune disconnected boards to ensure accurate connection status
+    user_game_state.prune_disconnected_boards()
+    
     all_boards = []
     
     # Get connected boards
