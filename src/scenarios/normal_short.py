@@ -55,14 +55,16 @@ def getScript():
 	script.allowProduction(Source.COAL)
 
 	d = (Day()
-		.comment("Uhelky")
+		.comment("Éra uhelných elektráren")
 		.build())
 	script.addRound(d)
 
 	s = Slide("normal/12.svg")
 	script.addRound(s)
 
-	n = Night().build()
+	n = (Night()
+		.comment("Éra uhelných elektráren")
+		.build())
 	script.addRound(n)
 
 	sl = Slide("normal/14.svg")
@@ -73,13 +75,17 @@ def getScript():
 	script.allowProduction(Source.HYDRO)
 	script.allowProduction(Source.HYDRO_STORAGE)
 
-	d = Day().build()
+	d = (Day()
+		.comment("Éra vodních elektráren")
+		.build())
 	script.addRound(d)
 
 	sl = Slide("normal/17.svg")
 	script.addRound(sl)
 
-	n = Night().build()
+	n = (Night()
+		.comment("Éra vodních elektráren")
+		.build())
 	script.addRound(n)
 
 	sl = Slide("normal/19.svg")
@@ -89,13 +95,17 @@ def getScript():
 	script.allowProduction(Source.NUCLEAR)
 	script.changeBuildingsConsumptions(CITY_CENTERS, (150, 150))
 
-	d = Day().build()
+	d = (Day()
+		.comment("Éra jaderných elektráren")
+		.build())
 	script.addRound(d)
 
 	sl = Slide("normal/22.svg")
 	script.addRound(sl)
 
-	n = Night().build()
+	n = (Night()
+		.comment("Éra jaderných elektráren")
+		.build())
 	script.addRound(n)
 
 	sl = Slide("normal/24.svg")
@@ -105,13 +115,17 @@ def getScript():
 	script.changeBuildingsConsumptions(CITY_CENTERS, (100, 100))
 	script.allowProduction(Source.GAS)
 	
-	d = Day().build()
+	d = (Day()
+		.comment("Éra paroplynových elektráren")
+		.build())
 	script.addRound(d)
 
 	sl = Slide("normal/27.svg")
 	script.addRound(sl)
 
-	n = Night().build()
+	n = (Night()
+		.comment("Éra paroplynových elektráren")
+		.build())
 	script.addRound(n)
 
 	sr = SlideRange(["normal/29.svg",
@@ -133,10 +147,10 @@ def getScript():
 	# spotřeba vyrostla o 600MW ve dne v noci o 450MW
 
 	d = (Day()
-		.comment("MS v hokeji, porucha plyn elektrárny")
+		.comment("MS v hokeji, porucha paroplynové elektrárny")
 		.addBuildingModifiers(CITY_CENTERS, 600)
 		.outage(Source.GAS)
-		.partly_cloudy()
+		.sunny()
 		.windy()
 		.build())
 
@@ -146,9 +160,10 @@ def getScript():
 	script.addRound(sl)
 
 	n = (Night()
+		.comment("MS v hokeji, porucha paroplynové elektrárny")
 		.addBuildingModifiers(CITY_CENTERS, 450)
 		.outage(Source.GAS)
-		.breezy()
+		.windy()
 		.build())
 
 	script.addRound(n)

@@ -57,6 +57,7 @@ def getScript():
 	script.addRound(sl)
 
 	d = (Day()
+		.comment("Den")
 		.sunny()
 		.windy()
 		.build())
@@ -67,6 +68,7 @@ def getScript():
 	script.addRound(sl)
 
 	n = (Night()
+		.comment("Noc")
 		.windy()
 		.build())
 

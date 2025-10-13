@@ -57,6 +57,7 @@ def getScript():
 	script.addRound(sl)
 
 	d = (Day()
+		.comment("Den")
 		.sunny()
 		.windy()
 		.build())
@@ -67,6 +68,7 @@ def getScript():
 	script.addRound(sl)
 
 	n = (Night()
+		.comment("Noc")
 		.windy()
 		.build())
 
@@ -76,7 +78,7 @@ def getScript():
 	script.addRound(sl)
 
 	d = (Day()
-		.comment("MS v hokeji, porucha plyn elektrárny")
+		.comment("MS v hokeji, porucha paroplynové elektrárny")
 		.addBuildingModifiers(CITY_CENTERS, 600)
 		.outage(Source.GAS)
 		.cloudy()
@@ -89,6 +91,7 @@ def getScript():
 	script.addRound(sl)
 
 	n = (Night()
+		.comment("MS v hokeji, porucha paroplynové elektrárny")
 		.addBuildingModifiers(CITY_CENTERS, 450)
 		.outage(Source.GAS)
 		.windy()
