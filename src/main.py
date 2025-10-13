@@ -1205,6 +1205,21 @@ def next_round():
             # Add display data for weather/round information using WeatherMessageHandler
             current_round_obj = script.getCurrentRound()
             
+            # Add comment and buildings_comment from the round
+            if hasattr(current_round_obj, 'getComment'):
+                response_data["comment"] = current_round_obj.getComment()
+            if hasattr(current_round_obj, 'getBuildingsComment'):
+                response_data["buildings_comment"] = current_round_obj.getBuildingsComment()
+            
+            # Add outages from the round
+            if hasattr(current_round_obj, 'getOutages'):
+                outages = current_round_obj.getOutages()
+                response_data["outages"] = [str(source) for source in outages]
+            
+            # Add cumulative registered sources (all sources allowed up to current round)
+            cumulative_registered_sources = script.getCumulativeRegisteredSources()
+            response_data["cumulative_registered_sources"] = [str(source) for source in cumulative_registered_sources]
+            
             # Get weather conditions from the round
             weather_conditions = []
             if hasattr(current_round_obj, 'weather') and current_round_obj.weather:
@@ -1489,8 +1504,18 @@ def poll_for_users():
                 "round_type": round_type.value,
                 "round_type_name": str(round_type),
                 "comment": current_round.getComment() if hasattr(current_round, 'getComment') else None,
+                "buildings_comment": current_round.getBuildingsComment() if hasattr(current_round, 'getBuildingsComment') else None,
                 "info_file": current_round.getInfoFile() if hasattr(current_round, 'getInfoFile') else None
             }
+            
+            # Add outages if available
+            if hasattr(current_round, 'getOutages'):
+                outages = current_round.getOutages()
+                round_details["outages"] = [str(source) for source in outages]
+            
+            # Add cumulative registered sources (all sources allowed up to current round)
+            cumulative_registered_sources = script.getCumulativeRegisteredSources()
+            round_details["cumulative_registered_sources"] = [str(source) for source in cumulative_registered_sources]
             
             # Add weather information for PlayRounds
             if round_type in [Enak.RoundType.DAY, Enak.RoundType.NIGHT]:

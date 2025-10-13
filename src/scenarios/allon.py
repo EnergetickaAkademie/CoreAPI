@@ -58,6 +58,7 @@ def getScript():
 
 	d = (Day()
 		.comment("Den")
+		.buildings_comment("Můžete postavit až 4 stavby")
 		.sunny()
 		.windy()
 		.build())

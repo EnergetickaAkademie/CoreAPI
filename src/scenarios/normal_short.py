@@ -56,6 +56,7 @@ def getScript():
 
 	d = (Day()
 		.comment("Éra uhelných elektráren")
+		.buildings_comment("Můžete postavit až 4 malé stavby")
 		.build())
 	script.addRound(d)
 
@@ -77,6 +78,7 @@ def getScript():
 
 	d = (Day()
 		.comment("Éra vodních elektráren")
+		.buildings_comment("Můžete postavit až 3 malé stavby")
 		.build())
 	script.addRound(d)
 
@@ -97,6 +99,7 @@ def getScript():
 
 	d = (Day()
 		.comment("Éra jaderných elektráren")
+		.buildings_comment("Můžete postavit až 2 velké stavby")
 		.build())
 	script.addRound(d)
 
@@ -117,6 +120,7 @@ def getScript():
 	
 	d = (Day()
 		.comment("Éra paroplynových elektráren")
+		.buildings_comment("Můžete postavit až 1 velkou stavbu")
 		.build())
 	script.addRound(d)
 
@@ -147,7 +151,8 @@ def getScript():
 	# spotřeba vyrostla o 600MW ve dne v noci o 450MW
 
 	d = (Day()
-		.comment("MS v hokeji, porucha paroplynové elektrárny")
+		.comment("Mistrovství světa v hokeji")
+		.buildings_comment("Můžete postavit až 3 stavby")
 		.addBuildingModifiers(CITY_CENTERS, 600)
 		.outage(Source.GAS)
 		.sunny()
@@ -160,7 +165,7 @@ def getScript():
 	script.addRound(sl)
 
 	n = (Night()
-		.comment("MS v hokeji, porucha paroplynové elektrárny")
+		.comment("Mistrovství světa v hokeji")
 		.addBuildingModifiers(CITY_CENTERS, 450)
 		.outage(Source.GAS)
 		.windy()
