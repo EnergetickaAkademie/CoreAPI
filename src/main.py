@@ -169,45 +169,32 @@ def generate_game_statistics(game_state: GameState):
     # history = [round1_data, round2_data, ...]
     # where round_data = {"Team A": {'productions': [(Power.NUCLEAR, 1500), ...], 'total_consumption': 1600}, ...}
     
-    # First, collect all rounds that were played by any board
+    # Filter to only include boards that participated in the current game
+    participating_boards = {board_id: board for board_id, board in game_state.boards.items() 
+                           if board.participated_in_current_game}
+    
+    debug_print(f"Total boards: {len(game_state.boards)}, Participating boards: {len(participating_boards)}")
+    
+    # First, collect all rounds that were played by any participating board
     all_round_indices = set()
-    for board in game_state.boards.values():
+    for board in participating_boards.values():
         all_round_indices.update(board.round_history)
     
     if not all_round_indices:
-        logger.debug("No round history found for any boards")
-        # Return empty statistics with boards data only
-        for board_id, board in game_state.boards.items():
-            board_stats = board.to_dict()
-            board_stats["total_energy_produced"] = 0
-            board_stats["total_energy_consumed"] = 0
-            board_stats["average_production"] = 0
-            board_stats["average_consumption"] = 0
-            board_stats["energy_balance"] = 0
-            board_stats["average_production_by_type"] = {}
-            statistics["boards"].append(board_stats)
-            
-            # Add mock scores since we have no real data
-            statistics["team_performance"][board_id] = {
-                "team_name": board.display_name,
-                "team_number": board_id.replace('board', '') if board_id.startswith('board') else board_id,
-                "ecology": 50,
-                "elmix": 50,
-                "finances": 50,
-                "popularity": 50
-            }
+        logger.debug("No round history found for any participating boards")
+        # Return empty statistics - no boards participated
         return statistics
     
     # Sort rounds chronologically
     sorted_rounds = sorted(all_round_indices)
     
-    # Build history for scoring system
+    # Build history for scoring system - only for participating boards
     history = []
     
     for round_index in sorted_rounds:
         round_data = {}
         
-        for board_id, board in game_state.boards.items():
+        for board_id, board in participating_boards.items():
             team_name = board.display_name
             
             # Get data for this specific round from board history
@@ -278,8 +265,8 @@ def generate_game_statistics(game_state: GameState):
         logger.debug(f"Full traceback: {traceback.format_exc()}")
         final_scores = {}
     
-    # Process each board's complete data
-    for board_id, board in game_state.boards.items():
+    # Process each participating board's complete data
+    for board_id, board in participating_boards.items():
         board_stats = board.to_dict()
         
         # Add calculated statistics
