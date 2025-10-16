@@ -1451,7 +1451,7 @@ def poll_for_users():
     script = user_game_state.get_script()
     
     # Prune disconnected boards to ensure accurate connection status
-    user_game_state.prune_disconnected_boards()
+    #HACK: FIXME: TODO: user_game_state.prune_disconnected_boards() #needs a proper fix for boards to not appear in the end statistics
     
     all_boards = []
     
