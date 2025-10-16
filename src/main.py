@@ -849,36 +849,23 @@ def post_values():
         if not board:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
         
-        # Update connected buildings with special logic for game protection
+        # Update connected buildings - only additions allowed, never subtractions
         script = user_game_state.get_script()
         previous_buildings = board.get_connected_buildings() if hasattr(board, 'get_connected_buildings') else []
-        previous_count = len(previous_buildings)
+        previous_building_uids = {b['uid'] for b in previous_buildings}
         
-        # During an active game, ignore empty building updates if board previously had buildings
-        # This prevents loss of building state when board quickly disconnects/reconnects
-        game_is_active = is_game_active(script)
-        should_ignore_empty = (game_is_active and 
-                              previous_count > 0 and 
-                              len(connected_buildings) == 0)
+        # Add any new buildings that aren't already in the list
+        added_count = 0
+        for building in connected_buildings:
+            if building['uid'] not in previous_building_uids:
+                try:
+                    board.add_connected_building(building['uid'], building['building_type'])
+                    added_count += 1
+                except Exception as e:
+                    print(f"Failed to add building {building}: {e}", file=sys.stderr)
         
-        if should_ignore_empty:
-            # Keep existing buildings - board is reconnecting and hasn't downloaded state yet
-            debug_print(f"Board {board_id}: Ignoring empty building list during active game (preserving {previous_count} buildings)")
-            print(f"Board {board_id}: Ignoring empty building list during active game (preserving {previous_count} buildings)", file=sys.stderr)
-        else:
-            # Normal building update - replace with new list
-            board.clear_connected_buildings()
-            if connected_buildings:
-                for building in connected_buildings:
-                    try:
-                        board.add_connected_building(building['uid'], building['building_type'])
-                    except Exception as e:
-                        print(f"Failed to add building {building}: {e}", file=sys.stderr)
-            # Debug trace to verify behavior
-            if previous_count > 0 and len(connected_buildings) == 0 and not game_is_active:
-                print(f"Board {board_id}: Cleared buildings (game not active, prev={previous_count}, new=0)", file=sys.stderr)
-            else:
-                print(f"Board {board_id}: Updated connected_buildings (prev={previous_count}, new={len(connected_buildings)})", file=sys.stderr)
+        if added_count > 0:
+            print(f"Board {board_id}: Added {added_count} new building(s) (total now: {len(board.get_connected_buildings())})", file=sys.stderr)
         
         # Pass the script to track round changes
         board.update_power(production, consumption, script)
