@@ -867,8 +867,32 @@ def post_values():
         if added_count > 0:
             print(f"Board {board_id}: Added {added_count} new building(s) (total now: {len(board.get_connected_buildings())})", file=sys.stderr)
         
-        # Pass the script to track round changes
-        board.update_power(production, consumption, script)
+        # Determine whether to ignore zeroed-out power update during active game reconnects
+        previous_production = getattr(board, 'production', 0)
+        previous_consumption = getattr(board, 'consumption', 0)
+        has_previous_power = (previous_production != 0 or previous_consumption != 0)
+        has_buildings = len(previous_buildings) > 0 or added_count > 0
+        game_is_active = is_game_active(script)
+        should_ignore_zero_power = (
+            game_is_active
+            and has_buildings
+            and has_previous_power
+            and production == 0
+            and consumption == 0
+        )
+
+        if should_ignore_zero_power:
+            debug_print(
+                f"Board {board_id}: Ignoring zero production/consumption during active game reconnect"
+            )
+            print(
+                f"Board {board_id}: Ignoring zero production/consumption during active game reconnect (keeping prod={previous_production}, cons={previous_consumption})",
+                file=sys.stderr
+            )
+            board.update_last_activity()
+        else:
+            # Pass the script to track round changes
+            board.update_power(production, consumption, script)
         return b'OK', 200, {'Content-Type': 'application/octet-stream'}
         
     except BinaryProtocolError as e:
