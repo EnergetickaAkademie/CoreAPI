@@ -251,6 +251,8 @@ class BoardState:
         self.power_generation_by_type: Dict[str, float] = {}
         # Connected buildings for persistence across board restarts
         self.connected_buildings: List[Dict[str, Any]] = []
+        # Track if board has participated in current game (sent data during game)
+        self.participated_in_current_game: bool = False
 
     def is_connected(self) -> bool:
         """
@@ -278,7 +280,13 @@ class BoardState:
         """
         Updates the power production and consumption for the board.
         History is now saved only when explicitly requested (e.g., during next_round).
+        Marks board as having participated in the current game.
         """
+        # Mark that this board has participated in the current game
+        if not self.participated_in_current_game:
+            debug_print(f"Board {self.id}: Marking as participated in game")
+            self.participated_in_current_game = True
+        
         # Determine current round from script and update tracker
         if script:
             self.current_round_index = script.current_round_index
@@ -413,7 +421,13 @@ class BoardState:
     def update_power_generation_by_type(self, power_type: str, generation: float):
         """
         Updates the power generation for a specific power plant type.
+        Marks board as having participated in the current game.
         """
+        # Mark that this board has participated in the current game
+        if not self.participated_in_current_game:
+            debug_print(f"Board {self.id}: Marking as participated in game (via power_generation)")
+            self.participated_in_current_game = True
+            
         self.power_generation_by_type[power_type] = generation
         self.update_last_activity()
 
@@ -475,6 +489,7 @@ class BoardState:
         - power plant generation tracking
         - connected buildings
         - current_round_index
+        - participation flag (board must re-participate in new game)
         """
         self.production = 0
         self.consumption = 0
@@ -487,6 +502,7 @@ class BoardState:
         self.current_round_index = -1
         self.power_generation_by_type.clear()
         self.connected_buildings = []
+        self.participated_in_current_game = False  # Reset participation flag
         self.update_last_activity()
 
     def to_dict(self):
@@ -510,4 +526,5 @@ class BoardState:
             "current_round_index": self.current_round_index,
             "power_generation_by_type": self.power_generation_by_type,
             "connected_buildings": self.connected_buildings,
+            "participated_in_current_game": self.participated_in_current_game,
         }
