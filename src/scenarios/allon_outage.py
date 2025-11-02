@@ -57,8 +57,8 @@ def getScript():
 	script.addRound(sl)
 
 	d = (Day()
-		.comment("Den")
-		.buildings_comment("Můžete postavit až 4 stavby")
+		.comment("Všechno povoleno - Den")
+		.buildings_comment("Můžete postavit kolik chcete staveb")
 		.sunny()
 		.windy()
 		.build())
@@ -69,7 +69,8 @@ def getScript():
 	script.addRound(sl)
 
 	n = (Night()
-		.comment("Noc")
+		.comment("Všechno povoleno - Noc")
+        .buildings_comment("Můžete postavit kolik chcete staveb")
 		.windy()
 		.build())
 
@@ -80,6 +81,8 @@ def getScript():
 
 	d = (Day()
 		.comment("Mistrovství světa v hokeji")
+		.buildings_comment("Můžete postavit kolik chcete staveb")
+		.sunny()
 		.addBuildingModifiers(CITY_CENTERS, 600)
 		.outage(Source.GAS)
 		.cloudy()
@@ -93,6 +96,8 @@ def getScript():
 
 	n = (Night()
 		.comment("Mistrovství světa v hokeji")
+		.buildings_comment("Můžete postavit kolik chcete staveb")
+		.sunny()
 		.addBuildingModifiers(CITY_CENTERS, 450)
 		.outage(Source.GAS)
 		.windy()

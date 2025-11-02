@@ -57,9 +57,8 @@ def getScript():
 	script.addRound(sl)
 
 	d = (Day()
-		.comment("Den")
-		.buildings_comment("Můžete postavit až 4 stavby")
-		.sunny()
+		.comment("Všechno povoleno - Den")
+		.buildings_comment("Můžete postavit kolik chcete staveb")
 		.windy()
 		.build())
 
@@ -69,7 +68,9 @@ def getScript():
 	script.addRound(sl)
 
 	n = (Night()
-		.comment("Noc")
+		.comment("Všechno povoleno - Noc")
+		.buildings_comment("Můžete postavit kolik chcete staveb")
+		.sunny()
 		.windy()
 		.build())
 
