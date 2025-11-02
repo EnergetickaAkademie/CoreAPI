@@ -97,7 +97,6 @@ def getScript():
 	n = (Night()
 		.comment("Mistrovství světa v hokeji")
 		.buildings_comment("Můžete postavit kolik chcete staveb")
-		.sunny()
 		.addBuildingModifiers(CITY_CENTERS, 450)
 		.outage(Source.GAS)
 		.windy()
