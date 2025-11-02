@@ -70,7 +70,6 @@ def getScript():
 	n = (Night()
 		.comment("Všechno povoleno - Noc")
 		.buildings_comment("Můžete postavit kolik chcete staveb")
-		.sunny()
 		.windy()
 		.build())
 
