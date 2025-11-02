@@ -187,7 +187,7 @@ class BoardState:
     Represents the state of a board in the application.
     """
     # Connection timeout in seconds
-    CONNECTION_TIMEOUT = 5.0
+    CONNECTION_TIMEOUT = 10.0
     
     @staticmethod
     def generate_display_name(board_id: str) -> str:
