@@ -169,45 +169,32 @@ def generate_game_statistics(game_state: GameState):
     # history = [round1_data, round2_data, ...]
     # where round_data = {"Team A": {'productions': [(Power.NUCLEAR, 1500), ...], 'total_consumption': 1600}, ...}
     
-    # First, collect all rounds that were played by any board
+    # Filter to only include boards that participated in the current game
+    participating_boards = {board_id: board for board_id, board in game_state.boards.items() 
+                           if board.participated_in_current_game}
+    
+    debug_print(f"Total boards: {len(game_state.boards)}, Participating boards: {len(participating_boards)}")
+    
+    # First, collect all rounds that were played by any participating board
     all_round_indices = set()
-    for board in game_state.boards.values():
+    for board in participating_boards.values():
         all_round_indices.update(board.round_history)
     
     if not all_round_indices:
-        logger.debug("No round history found for any boards")
-        # Return empty statistics with boards data only
-        for board_id, board in game_state.boards.items():
-            board_stats = board.to_dict()
-            board_stats["total_energy_produced"] = 0
-            board_stats["total_energy_consumed"] = 0
-            board_stats["average_production"] = 0
-            board_stats["average_consumption"] = 0
-            board_stats["energy_balance"] = 0
-            board_stats["average_production_by_type"] = {}
-            statistics["boards"].append(board_stats)
-            
-            # Add mock scores since we have no real data
-            statistics["team_performance"][board_id] = {
-                "team_name": board.display_name,
-                "team_number": board_id.replace('board', '') if board_id.startswith('board') else board_id,
-                "ecology": 50,
-                "elmix": 50,
-                "finances": 50,
-                "popularity": 50
-            }
+        logger.debug("No round history found for any participating boards")
+        # Return empty statistics - no boards participated
         return statistics
     
     # Sort rounds chronologically
     sorted_rounds = sorted(all_round_indices)
     
-    # Build history for scoring system
+    # Build history for scoring system - only for participating boards
     history = []
     
     for round_index in sorted_rounds:
         round_data = {}
         
-        for board_id, board in game_state.boards.items():
+        for board_id, board in participating_boards.items():
             team_name = board.display_name
             
             # Get data for this specific round from board history
@@ -278,8 +265,8 @@ def generate_game_statistics(game_state: GameState):
         logger.debug(f"Full traceback: {traceback.format_exc()}")
         final_scores = {}
     
-    # Process each board's complete data
-    for board_id, board in game_state.boards.items():
+    # Process each participating board's complete data
+    for board_id, board in participating_boards.items():
         board_stats = board.to_dict()
         
         # Add calculated statistics
@@ -862,21 +849,50 @@ def post_values():
         if not board:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
         
-        # Always replace connected buildings list since all boards now send new format
-        previous_count = len(board.get_connected_buildings()) if hasattr(board, 'get_connected_buildings') else 'n/a'
-        board.clear_connected_buildings()
-        if connected_buildings:
-            for building in connected_buildings:
+        # Update connected buildings - only additions allowed, never subtractions
+        script = user_game_state.get_script()
+        previous_buildings = board.get_connected_buildings() if hasattr(board, 'get_connected_buildings') else []
+        previous_building_uids = {b['uid'] for b in previous_buildings}
+        
+        # Add any new buildings that aren't already in the list
+        added_count = 0
+        for building in connected_buildings:
+            if building['uid'] not in previous_building_uids:
                 try:
                     board.add_connected_building(building['uid'], building['building_type'])
+                    added_count += 1
                 except Exception as e:
                     print(f"Failed to add building {building}: {e}", file=sys.stderr)
-        # Debug trace to verify clearing behavior
-        print(f"Board {board_id}: replaced connected_buildings (prev={previous_count}, new={len(connected_buildings)})", file=sys.stderr)
         
-        # Pass the script to track round changes
-        script = user_game_state.get_script()
-        board.update_power(production, consumption, script)
+        if added_count > 0:
+            print(f"Board {board_id}: Added {added_count} new building(s) (total now: {len(board.get_connected_buildings())})", file=sys.stderr)
+        
+        # Determine whether to ignore zeroed-out power update during active game reconnects
+        previous_production = getattr(board, 'production', 0)
+        previous_consumption = getattr(board, 'consumption', 0)
+        has_previous_power = (previous_production != 0 or previous_consumption != 0)
+        has_buildings = len(previous_buildings) > 0 or added_count > 0
+        game_is_active = is_game_active(script)
+        should_ignore_zero_power = (
+            game_is_active
+            and has_buildings
+            and has_previous_power
+            and production == 0
+            and consumption == 0
+        )
+
+        if should_ignore_zero_power:
+            debug_print(
+                f"Board {board_id}: Ignoring zero production/consumption during active game reconnect"
+            )
+            print(
+                f"Board {board_id}: Ignoring zero production/consumption during active game reconnect (keeping prod={previous_production}, cons={previous_consumption})",
+                file=sys.stderr
+            )
+            board.update_last_activity()
+        else:
+            # Pass the script to track round changes
+            board.update_power(production, consumption, script)
         return b'OK', 200, {'Content-Type': 'application/octet-stream'}
         
     except BinaryProtocolError as e:
