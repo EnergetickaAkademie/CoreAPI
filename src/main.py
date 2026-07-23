@@ -18,6 +18,8 @@ from MeritOrder import Power
 from scoring import calculate_final_scores
 from weather_messages import WeatherMessageHandler
 
+from building_constants import get_building_name
+
 # Global debug flag from environment variable
 DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
 
@@ -838,53 +840,34 @@ def post_values():
     """Binary endpoint - Board posts current production and consumption"""
     try:
         data = request.get_data()
+        if len(data) != 8:
+            logger.error(f"Invalid data length: {len(data)}, expected 8 bytes")
+            return b'INVALID_LENGTH', 400, {'Content-Type': 'application/octet-stream'}
         
-        # All boards must send the new format with buildings data
-        try:
-            production, consumption, connected_buildings = BoardBinaryProtocol.unpack_power_data_with_buildings(data)
-        except BinaryProtocolError as e:
-            logger.error(f"Invalid power data format from board - new format required: {e}")
-            return b'INVALID_FORMAT', 400, {'Content-Type': 'application/octet-stream'}
+        production, consumption = struct.unpack('>II', data)
+        print(f"Received production: {production}, consumption: {consumption}", file=sys.stderr)
         
-        print(f"Received production: {production}, consumption: {consumption}, buildings: {len(connected_buildings)}", file=sys.stderr)
-        # Get board ID from authentication (from JWT username)
         user = getattr(request, 'user', {})
         board_id = user.get('username', '')
-        
         if not board_id:
             return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
         
-        # Get user's game state
         user_game_state = get_user_game_state(request.user)
-        
-        # Get the board and update power
         board = user_game_state.get_board(board_id)
         if not board:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
         
-        # Always replace connected buildings list since all boards now send new format
-        previous_count = len(board.get_connected_buildings()) if hasattr(board, 'get_connected_buildings') else 'n/a'
-        board.clear_connected_buildings()
-        if connected_buildings:
-            for building in connected_buildings:
-                try:
-                    board.add_connected_building(building['uid'], building['building_type'])
-                except Exception as e:
-                    print(f"Failed to add building {building}: {e}", file=sys.stderr)
-        # Debug trace to verify clearing behavior
-        print(f"Board {board_id}: replaced connected_buildings (prev={previous_count}, new={len(connected_buildings)})", file=sys.stderr)
-        
-        # Pass the script to track round changes
         script = user_game_state.get_script()
         board.update_power(production, consumption, script)
         return b'OK', 200, {'Content-Type': 'application/octet-stream'}
         
-    except BinaryProtocolError as e:
-        logger.error(f"Binary protocol error in post_values: {e}")
+    except struct.error as e:
+        logger.error(f"Struct unpack error in post_values: {e}")
         return b'PROTOCOL_ERROR', 400, {'Content-Type': 'application/octet-stream'}
     except Exception as e:
         logger.error(f"Error in post_values: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
+        return b'ERROR', 500, {'Content-Type': 'application/octet-stream'}
         return b'ERROR', 500, {'Content-Type': 'application/octet-stream'}
 
 @app.route('/prod_connected', methods=['POST'])
@@ -2309,6 +2292,78 @@ def get_configured_groups():
         return jsonify({'error': 'User configuration not available'}), 500
     except Exception as e:
         return jsonify({'error': f'Error getting groups: {str(e)}'}), 500
+
+#endpoints for changing board counts
+
+@app.route('/board/add_building', methods=['POST'])
+@require_board_auth
+def add_building():
+    data = request.get_data()
+    if len(data) < 2:
+        return b'INVALID', 400
+    building_type = data[0]
+    uid_len = data[1]
+    if len(data) < 2 + uid_len:
+        return b'INVALID', 400
+    uid = data[2:2+uid_len].decode('utf-8')
+    user = getattr(request, 'user', {})
+    board_id = user.get('username', '')
+    if not board_id:
+        return b'INVALID_BOARD', 400
+    user_game_state = get_user_game_state(request.user)
+    board = user_game_state.get_board(board_id)
+    if not board:
+        return b'BOARD_NOT_FOUND', 404
+    board.add_building(building_type)
+    return b'OK', 200
+
+@app.route('/board/get_counts', methods=['GET'])
+@require_board_auth
+def get_counts():
+    user = getattr(request, 'user', {})
+    board_id = user.get('username', '')
+    if not board_id:
+        return b'INVALID_BOARD', 400
+    user_game_state = get_user_game_state(request.user)
+    board = user_game_state.get_board(board_id)
+    if not board:
+        return b'BOARD_NOT_FOUND', 404
+    counts = board.get_counts()
+    payload = bytes(counts)   # 18 bytes
+    return payload, 200, {'Content-Type': 'application/octet-stream'}
+
+@app.route('/lecturer/board_counts', methods=['GET'])
+@require_lecturer_auth
+def lecturer_board_counts():
+    user = getattr(request, 'user', {})
+    group_id = user.get('group_id', 'group1')
+    user_game_state = group_manager.get_game_state(group_id)
+    result = {}
+    for board_id, board in user_game_state.boards.items():
+        counts = board.get_counts()
+        # Optionally include names using building_constants
+        result[board_id] = {
+            "counts": counts,
+            "names": [get_building_name(Enak.Building(i)) for i in range(len(counts))]
+        }
+    return jsonify(result)
+
+@app.route('/lecturer/update_counts', methods=['POST'])
+@require_lecturer_auth
+def lecturer_update_counts():
+    data = request.get_json()
+    board_id = data.get('board_id')
+    counts = data.get('counts')
+    if not board_id or not counts or len(counts) != len(Enak.Building):
+        return jsonify({'error': 'Invalid data'}), 400
+    user = getattr(request, 'user', {})
+    group_id = user.get('group_id', 'group1')
+    user_game_state = group_manager.get_game_state(group_id)
+    board = user_game_state.get_board(board_id)
+    if not board:
+        return jsonify({'error': 'Board not found'}), 404
+    board.set_counts(counts)
+    return jsonify({'success': True})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
