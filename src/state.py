@@ -60,6 +60,9 @@ class GameState:
 		self.boards: Dict[str, 'BoardState'] = {}
 		self.script = script
 
+		self.production_range_overrides = {}
+		self.consumption_overrides = {}
+
 	def get_script(self) -> Script:
 		"""
 		Returns the script associated with the game state.
@@ -181,6 +184,24 @@ class GameState:
 			'connected_boards': connected_boards,
 			'disconnected_boards': disconnected_boards
 		}
+
+	def get_production_override(self, source):
+		return self.production_range_overrides.get(source)
+
+	def set_production_override(self, source, min_val, max_val):
+		self.production_range_overrides[source] = (min_val, max_val)
+
+	def clear_production_override(self, source):
+		self.production_range_overrides.pop(source, None)
+
+	def get_consumption_override(self, building):
+		return self.consumption_overrides.get(building)
+
+	def set_consumption_override(self, building, value):
+		self.consumption_overrides[building] = value
+
+	def clear_consumption_override(self, building):
+		self.consumption_overrides.pop(building, None)
 
 
 class BoardState:

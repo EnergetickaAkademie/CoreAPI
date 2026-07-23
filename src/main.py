@@ -752,83 +752,87 @@ def poll_binary():
 @app.route('/prod_vals', methods=['GET'])
 @require_board_auth
 def get_production_values():
-    """Binary endpoint - Get power plant production ranges"""
+    """Binary endpoint - Get power plant production ranges with lecturer overrides"""
     try:
-        # Get board ID from authentication (from JWT username)
         user = getattr(request, 'user', {})
         board_id = user.get('username', '')
-        
         if not board_id:
             return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
 
-        # Get user's game state
         user_game_state = get_user_game_state(request.user)
-        
-        # Get the board and update last activity for liveliness detection
         board = user_game_state.get_board(board_id)
         if board:
             board.update_last_activity()
-        
+
         script = user_game_state.get_script()
         if not script:
             return b'SCRIPT_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
-        
-        # Get production ranges from script (includes coefficients applied)
+
         from enak.Enak import Source
         prod_ranges = {}
-        
-        # Get all available sources and their current production ranges
+
         for source in Source:
-            range_values = script.getCurrentProductionRange(source)
-            if range_values and range_values != (0.0, 0.0):
-                prod_ranges[source] = range_values
+            # Check for lecturer override first
+            override = user_game_state.get_production_override(source)
+            if override is not None:
+                min_val, max_val = override
+                # Override values are in MW; the board expects integers (MW)
+                prod_ranges[source] = (float(min_val), float(max_val))
+                if DEBUG_MODE:
+                    logger.debug(f"Using override for {source}: {override}")
+            else:
+                range_values = script.getCurrentProductionRange(source)
+                if range_values and range_values != (0.0, 0.0):
+                    prod_ranges[source] = range_values
+
         if DEBUG_MODE:
             logger.debug(f"Production ranges: {prod_ranges}")
-        
-        # Pack using binary protocol
+
         data = BoardBinaryProtocol.pack_production_ranges(prod_ranges)
         return data, 200, {'Content-Type': 'application/octet-stream'}
-        
+
     except Exception as e:
         logger.error(f"Error in get_production_values: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         return b'ERROR', 500, {'Content-Type': 'application/octet-stream'}
 
+
 @app.route('/cons_vals', methods=['GET'])
 @require_board_auth
 def get_consumption_values():
-    """Binary endpoint - Get consumer consumption values"""
+    """Binary endpoint - Get consumer consumption values with lecturer overrides"""
     try:
-        # Get board ID from authentication (from JWT username)
         user = getattr(request, 'user', {})
         board_id = user.get('username', '')
-        
         if not board_id:
             return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
 
-        # Get user's game state
         user_game_state = get_user_game_state(request.user)
-        
-        # Get the board and update last activity for liveliness detection
         board = user_game_state.get_board(board_id)
         if board:
             board.update_last_activity()
-        
+
         script = user_game_state.get_script()
         if not script:
             return b'SCRIPT_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
-        
-        # Get consumption for all buildings from script
+
         cons_coeffs = {}
         for building in Enak.Building:
-            consumption = script.getCurrentBuildingConsumption(building)
-            if consumption is not None:
-                cons_coeffs[building] = consumption
-        
-        # Pack using binary protocol
+            # Check for lecturer override first
+            override = user_game_state.get_consumption_override(building)
+            if override is not None:
+                # Override values are in MW; the board expects MW as well (it divides by 1000)
+                cons_coeffs[building] = float(override)
+                if DEBUG_MODE:
+                    logger.debug(f"Using override for {building}: {override}")
+            else:
+                consumption = script.getCurrentBuildingConsumption(building)
+                if consumption is not None:
+                    cons_coeffs[building] = consumption
+
         data = BoardBinaryProtocol.pack_consumption_values(cons_coeffs)
         return data, 200, {'Content-Type': 'application/octet-stream'}
-        
+
     except Exception as e:
         logger.error(f"Error in get_consumption_values: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
@@ -2364,6 +2368,104 @@ def lecturer_update_counts():
         return jsonify({'error': 'Board not found'}), 404
     board.set_counts(counts)
     return jsonify({'success': True})
+
+@app.route('/lecturer/production_overrides', methods=['GET', 'POST'])
+@require_lecturer_auth
+def lecturer_production_overrides():
+    user = getattr(request, 'user', {})
+    group_id = user.get('group_id', 'group1')
+    user_game_state = group_manager.get_game_state(group_id)
+
+    if request.method == 'GET':
+        # Return current overrides as dict: source_name -> {min, max}
+        data = {}
+        for source, (min_val, max_val) in user_game_state.production_range_overrides.items():
+            data[str(source)] = {'min': min_val, 'max': max_val}
+        return jsonify(data)
+
+    if request.method == 'POST':
+        data = request.get_json()
+        # data format: {"source_name": {"min": 300, "max": 600}, ...}
+        for source_name, vals in data.items():
+            # Find the Source enum by name
+            try:
+                source = Source[source_name.upper()]
+            except KeyError:
+                return jsonify({'error': f'Unknown source: {source_name}'}), 400
+            min_val = vals.get('min')
+            max_val = vals.get('max')
+            if min_val is None or max_val is None:
+                return jsonify({'error': 'min and max required'}), 400
+            user_game_state.set_production_override(source, min_val, max_val)
+        return jsonify({'success': True})
+
+@app.route('/lecturer/consumption_overrides', methods=['GET', 'POST'])
+@require_lecturer_auth
+def lecturer_consumption_overrides():
+    user = getattr(request, 'user', {})
+    group_id = user.get('group_id', 'group1')
+    user_game_state = group_manager.get_game_state(group_id)
+
+    if request.method == 'GET':
+        data = {}
+        for building, value in user_game_state.consumption_overrides.items():
+            data[str(building)] = value
+        return jsonify(data)
+
+    if request.method == 'POST':
+        data = request.get_json()
+        # data format: {"building_name": 123, ...}
+        for building_name, value in data.items():
+            try:
+                building = Enak.Building[building_name.upper()]
+            except KeyError:
+                return jsonify({'error': f'Unknown building: {building_name}'}), 400
+            user_game_state.set_consumption_override(building, value)
+        return jsonify({'success': True})
+
+@app.route('/lecturer/current_production_ranges', methods=['GET'])
+@require_lecturer_auth
+def current_production_ranges():
+    """Get current production ranges from the script (without overrides)."""
+    try:
+        user = getattr(request, 'user', {})
+        user_game_state = get_user_game_state(request.user)
+        script = user_game_state.get_script()
+        if not script:
+            return jsonify({})
+
+        from enak.Enak import Source
+        prod_ranges = {}
+        for source in Source:
+            range_values = script.getCurrentProductionRange(source)
+            if range_values and range_values != (0.0, 0.0):
+                prod_ranges[source.name] = {"min": range_values[0], "max": range_values[1]}
+        return jsonify(prod_ranges)
+    except Exception as e:
+        logger.error(f"Error in current_production_ranges: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/lecturer/current_consumption_values', methods=['GET'])
+@require_lecturer_auth
+def current_consumption_values():
+    """Get current consumption values from the script (without overrides)."""
+    try:
+        user = getattr(request, 'user', {})
+        user_game_state = get_user_game_state(request.user)
+        script = user_game_state.get_script()
+        if not script:
+            return jsonify({})
+
+        cons = {}
+        for building in Enak.Building:
+            consumption = script.getCurrentBuildingConsumption(building)
+            if consumption is not None:
+                cons[building.name] = consumption
+        return jsonify(cons)
+    except Exception as e:
+        logger.error(f"Error in current_consumption_values: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
