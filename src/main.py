@@ -2380,14 +2380,15 @@ def lecturer_production_overrides():
         # Return current overrides as dict: source_name -> {min, max}
         data = {}
         for source, (min_val, max_val) in user_game_state.production_range_overrides.items():
-            data[str(source)] = {'min': min_val, 'max': max_val}
+            data[source.name] = {'min': min_val, 'max': max_val}
         return jsonify(data)
 
     if request.method == 'POST':
         data = request.get_json()
-        # data format: {"source_name": {"min": 300, "max": 600}, ...}
+        if not data:
+            user_game_state.production_range_overrides.clear()
+            return jsonify({'success': True})
         for source_name, vals in data.items():
-            # Find the Source enum by name
             try:
                 source = Source[source_name.upper()]
             except KeyError:
@@ -2409,12 +2410,14 @@ def lecturer_consumption_overrides():
     if request.method == 'GET':
         data = {}
         for building, value in user_game_state.consumption_overrides.items():
-            data[str(building)] = value
+            data[building.name] = value
         return jsonify(data)
 
     if request.method == 'POST':
         data = request.get_json()
-        # data format: {"building_name": 123, ...}
+        if not data:
+            user_game_state.consumption_overrides.clear()
+            return jsonify({'success': True})
         for building_name, value in data.items():
             try:
                 building = Enak.Building[building_name.upper()]
