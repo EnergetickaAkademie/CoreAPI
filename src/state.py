@@ -101,7 +101,7 @@ class GameState:
 		debug_print(str(self.boards))
 		if board_id in self.boards:
 			return self.boards[board_id]
-		raise KeyError(f"Board with ID {board_id} not found in game state.")
+		return None
 
 	def save_all_boards_current_round_to_history(self):
 		"""
@@ -470,6 +470,32 @@ class BoardState:
 		self.connected_buildings.append({'uid': uid, 'building_type': building_type})
 		self.update_last_activity()
 
+	def register_building(self, uid: str, building_type: int) -> str:
+		"""Register one physical NFC tag exactly once.
+
+		Returns ``added``, ``duplicate``, ``conflict``, ``invalid``, or
+		``capacity`` so the HTTP layer can provide a stable response without
+		double-counting retried requests.
+		"""
+		if not uid or not 0 <= building_type < len(self.authoritative_counts):
+			return "invalid"
+
+		for building in self.connected_buildings:
+			if building.get('uid') != uid:
+				continue
+			if building.get('building_type') == building_type:
+				self.update_last_activity()
+				return "duplicate"
+			return "conflict"
+
+		if self.authoritative_counts[building_type] >= 255:
+			return "capacity"
+
+		self.connected_buildings.append({'uid': uid, 'building_type': building_type})
+		self.authoritative_counts[building_type] += 1
+		self.update_last_activity()
+		return "added"
+
 	def remove_connected_building(self, uid: str):
 		"""
 		Remove a connected building from the board state.
@@ -548,9 +574,45 @@ class BoardState:
 			self.update_last_activity()
 
 	def set_counts(self, counts: list):
-		if len(counts) == len(Enak.Building):
-			self.authoritative_counts = counts[:]
-			self.update_last_activity()
+		if (len(counts) != len(Enak.Building) or
+			not all(isinstance(value, int) and 0 <= value <= 255 for value in counts)):
+			raise ValueError("Building counts must be 18 byte-sized integers")
+		self.authoritative_counts = counts[:]
+		self.update_last_activity()
 
 	def get_counts(self) -> list:
 		return self.authoritative_counts[:]
+
+	def get_persistent_state(self) -> Dict[str, Any]:
+		"""Return the small restart-safe part of board state."""
+		return {
+			"authoritative_counts": self.get_counts(),
+			"connected_buildings": self.get_connected_buildings(),
+		}
+
+	def restore_persistent_state(self, data: Dict[str, Any]):
+		"""Restore validated registration/building state from durable storage."""
+		counts = data.get("authoritative_counts", [])
+		buildings = data.get("connected_buildings", [])
+
+		if (isinstance(counts, list) and
+			len(counts) == len(self.authoritative_counts) and
+			all(isinstance(value, int) and 0 <= value <= 255 for value in counts)):
+			self.authoritative_counts = counts[:]
+
+		valid_buildings = []
+		seen_uids = set()
+		if isinstance(buildings, list):
+			for building in buildings:
+				if not isinstance(building, dict):
+					continue
+				uid = building.get("uid")
+				building_type = building.get("building_type")
+				if (isinstance(uid, str) and uid and uid not in seen_uids and
+					isinstance(building_type, int) and
+					0 <= building_type < len(self.authoritative_counts)):
+					seen_uids.add(uid)
+					valid_buildings.append({"uid": uid, "building_type": building_type})
+		self.connected_buildings = valid_buildings
+		# Restored identity is not proof that the physical board is online.
+		self.last_updated = 0.0

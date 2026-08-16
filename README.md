@@ -2,6 +2,11 @@
 
 A Flask-based game API for managing power generation and consumption across multiple boards (like ESP32 devices). The game tracks power efficiency across multiple rounds with different scoring systems for day and night rounds.
 
+Board registration, NFC UID assignments, and authoritative building counts are
+stored in SQLite. Set `BOARD_STATE_DB_PATH` to choose the database location;
+the default is `data/board_state.db`. Deployments should mount that directory
+on persistent storage.
+
 ## Features
 
 - **Board Registration**: Register ESP32 boards with the system
