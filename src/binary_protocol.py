@@ -14,6 +14,15 @@ MAX_BOARD_TYPE_LENGTH = 16
 MAX_STRING_LENGTH = 64
 MAX_BUILDING_TABLE_ENTRIES = 64
 
+SYNC_V2_MAGIC = b'EA'
+SYNC_V2_VERSION = 2
+SYNC_V2_SOURCE_COUNT = 9
+SYNC_V2_BUILDING_COUNT = 18
+SYNC_V2_FLAG_GAME_ACTIVE = 0x01
+SYNC_V2_REQUEST = struct.Struct('>2sBBIii9i')
+SYNC_V2_RESPONSE_HEADER = struct.Struct('>2sBBII')
+SYNC_V2_RESPONSE_VALUES = struct.Struct('>45i18B')
+
 class BinaryProtocolError(Exception):
     """Custom exception for binary protocol errors"""
     pass
@@ -23,6 +32,98 @@ class BoardBinaryProtocol:
     Binary protocol implementation for ESP32 board communication
     Handles packing and unpacking of binary data for efficient communication
     """
+
+    @staticmethod
+    def pack_sync_v2_request(sequence: int, production: int, consumption: int,
+                             production_by_source: List[int]) -> bytes:
+        """Pack the fixed-size workshop-v2 board telemetry snapshot."""
+        if len(production_by_source) != SYNC_V2_SOURCE_COUNT:
+            raise BinaryProtocolError("sync v2 requires exactly 9 production values")
+        try:
+            return SYNC_V2_REQUEST.pack(
+                SYNC_V2_MAGIC, SYNC_V2_VERSION, 0, sequence,
+                production, consumption, *production_by_source,
+            )
+        except struct.error as exc:
+            raise BinaryProtocolError(f"Invalid sync v2 request value: {exc}") from exc
+
+    @staticmethod
+    def unpack_sync_v2_request(data: bytes) -> Dict[str, Any]:
+        """Validate and unpack the fixed 52-byte workshop-v2 request."""
+        if len(data) != SYNC_V2_REQUEST.size:
+            raise BinaryProtocolError(
+                f"Invalid sync v2 request length: {len(data)}, expected {SYNC_V2_REQUEST.size}"
+            )
+        magic, version, flags, sequence, production, consumption, *by_source = (
+            SYNC_V2_REQUEST.unpack(data)
+        )
+        if magic != SYNC_V2_MAGIC or version != SYNC_V2_VERSION:
+            raise BinaryProtocolError("Unsupported sync protocol magic or version")
+        if flags != 0:
+            raise BinaryProtocolError("Unsupported sync v2 request flags")
+        return {
+            "sequence": sequence,
+            "production": production,
+            "consumption": consumption,
+            "production_by_source": by_source,
+        }
+
+    @staticmethod
+    def pack_sync_v2_response(sequence: int, config_revision: int, game_active: bool,
+                              coefficients_milli: List[int], min_power_milli: List[int],
+                              max_power_milli: List[int], consumption_milli: List[int],
+                              building_counts: List[int]) -> bytes:
+        """Pack one atomic 210-byte configuration/count snapshot."""
+        if any(len(values) != SYNC_V2_SOURCE_COUNT for values in (
+                coefficients_milli, min_power_milli, max_power_milli)):
+            raise BinaryProtocolError("sync v2 requires exactly 9 values per source vector")
+        if len(consumption_milli) != SYNC_V2_BUILDING_COUNT:
+            raise BinaryProtocolError("sync v2 requires exactly 18 consumption values")
+        if (len(building_counts) != SYNC_V2_BUILDING_COUNT or
+                any(not isinstance(value, int) or not 0 <= value <= 255
+                    for value in building_counts)):
+            raise BinaryProtocolError("sync v2 building counts must be 18 bytes")
+
+        flags = SYNC_V2_FLAG_GAME_ACTIVE if game_active else 0
+        try:
+            header = SYNC_V2_RESPONSE_HEADER.pack(
+                SYNC_V2_MAGIC, SYNC_V2_VERSION, flags, sequence, config_revision
+            )
+            values = SYNC_V2_RESPONSE_VALUES.pack(
+                *coefficients_milli, *min_power_milli, *max_power_milli,
+                *consumption_milli, *building_counts,
+            )
+        except struct.error as exc:
+            raise BinaryProtocolError(f"Invalid sync v2 response value: {exc}") from exc
+        return header + values
+
+    @staticmethod
+    def unpack_sync_v2_response(data: bytes) -> Dict[str, Any]:
+        """Unpack a response for tests, simulators, and future tooling."""
+        expected_length = SYNC_V2_RESPONSE_HEADER.size + SYNC_V2_RESPONSE_VALUES.size
+        if len(data) != expected_length:
+            raise BinaryProtocolError(
+                f"Invalid sync v2 response length: {len(data)}, expected {expected_length}"
+            )
+        magic, version, flags, sequence, config_revision = (
+            SYNC_V2_RESPONSE_HEADER.unpack_from(data)
+        )
+        if magic != SYNC_V2_MAGIC or version != SYNC_V2_VERSION:
+            raise BinaryProtocolError("Unsupported sync response magic or version")
+        if flags & ~SYNC_V2_FLAG_GAME_ACTIVE:
+            raise BinaryProtocolError("Unsupported sync v2 response flags")
+
+        values = SYNC_V2_RESPONSE_VALUES.unpack_from(data, SYNC_V2_RESPONSE_HEADER.size)
+        return {
+            "sequence": sequence,
+            "config_revision": config_revision,
+            "game_active": bool(flags & SYNC_V2_FLAG_GAME_ACTIVE),
+            "coefficients_milli": list(values[0:9]),
+            "min_power_milli": list(values[9:18]),
+            "max_power_milli": list(values[18:27]),
+            "consumption_milli": list(values[27:45]),
+            "building_counts": list(values[45:63]),
+        }
     
     @staticmethod
     def pack_string(text: str, max_length: int) -> bytes:

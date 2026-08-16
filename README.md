@@ -7,6 +7,12 @@ stored in SQLite. Set `BOARD_STATE_DB_PATH` to choose the database location;
 the default is `data/board_state.db`. Deployments should mount that directory
 on persistent storage.
 
+ESP32 workshop-v2 boards use `POST /board/sync/v2` for a fixed-size binary
+exchange. One 52-byte request reports aggregate and per-source telemetry; one
+210-byte response atomically returns the full coefficients, production ranges,
+building consumption values, and board counts. Both messages use big-endian
+signed integers and sequence-number validation.
+
 ## Features
 
 - **Board Registration**: Register ESP32 boards with the system
