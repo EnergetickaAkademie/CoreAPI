@@ -57,8 +57,10 @@ class BoardBinaryProtocol:
             raise BinaryProtocolError(f"Invalid registration data length: {len(data)}, expected at least 52 bytes")
         
         board_id = struct.unpack('>I', data[0:4])[0]
-        
-        return board_id
+        board_name = BoardBinaryProtocol.unpack_string(data[4:36])
+        board_type = BoardBinaryProtocol.unpack_string(data[36:52])
+
+        return board_id, board_name, board_type
     
     @staticmethod
     def pack_registration_response(success: bool, message: str) -> bytes:
@@ -155,6 +157,9 @@ class BoardBinaryProtocol:
             coeff = coeff_int / 1000.0
             prod_coeffs[source_id] = coeff
             offset += 5
+
+        if offset >= len(data):
+            raise BinaryProtocolError("Missing consumption coefficient count")
         
         # Unpack consumption coefficients
         cons_count = data[offset]
@@ -169,6 +174,9 @@ class BoardBinaryProtocol:
             cons = cons_int / 1000.0
             cons_coeffs[building_id] = cons
             offset += 5
+
+        if offset >= len(data):
+            raise BinaryProtocolError("Missing connected building count")
         
         # Unpack connected buildings
         buildings_count = data[offset]

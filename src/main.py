@@ -17,6 +17,7 @@ from enak import Enak, Source
 from MeritOrder import Power
 from scoring import calculate_final_scores
 from weather_messages import WeatherMessageHandler
+from state_store import BoardStateStore
 
 from building_constants import get_building_name
 
@@ -92,14 +93,28 @@ class GroupGameManager:
         self.group_game_states = {}
         # Track explicit game end state per group to persist until new game starts
         self.game_ended_states = {}
+        self.state_store = BoardStateStore(
+            os.environ.get('BOARD_STATE_DB_PATH', 'data/board_state.db')
+        )
     
     def get_game_state(self, group_id: str) -> GameState:
         """Get or create game state for a specific group"""
         if group_id not in self.group_game_states:
             # Initialize with NO script - game is inactive by default
-            self.group_game_states[group_id] = GameState(None)
+            game_state = GameState(None)
+            for saved_state in self.state_store.load_group(group_id):
+                board = game_state.register_board(saved_state['board_id'])
+                board.restore_persistent_state(saved_state)
+            self.group_game_states[group_id] = game_state
             self.game_ended_states[group_id] = False
         return self.group_game_states[group_id]
+
+    def persist_board(self, group_id: str, board: BoardState):
+        self.state_store.save(group_id, board.id, board.get_persistent_state())
+
+    def persist_all_boards(self, group_id: str):
+        for board in self.get_game_state(group_id).boards.values():
+            self.persist_board(group_id, board)
     
     def mark_game_ended(self, group_id: str):
         """Mark game as explicitly ended for a group"""
@@ -111,6 +126,7 @@ class GroupGameManager:
         game_state = self.get_game_state(group_id)
         game_state.script = script
         game_state.reset_for_new_game()
+        self.persist_all_boards(group_id)
         self.game_ended_states[group_id] = False
         debug_print(f"New game started for group {group_id}, ended state cleared")
     
@@ -848,8 +864,7 @@ def post_values():
             logger.error(f"Invalid data length: {len(data)}, expected 8 bytes")
             return b'INVALID_LENGTH', 400, {'Content-Type': 'application/octet-stream'}
         
-        production, consumption = struct.unpack('>II', data)
-        print(f"Received production: {production}, consumption: {consumption}", file=sys.stderr)
+        production, consumption = struct.unpack('>ii', data)
         
         user = getattr(request, 'user', {})
         board_id = user.get('username', '')
@@ -885,6 +900,8 @@ def post_production_connected():
         
         # Unpack: count(1) + [id(4) + set_power(4)] * count
         count = struct.unpack('B', data[:1])[0]
+        if len(data) != 1 + count * 8:
+            return b'INVALID_DATA', 400, {'Content-Type': 'application/octet-stream'}
         offset = 1
         
         # power_plants: plant_id -> set_power_mW (as sent from board)
@@ -966,6 +983,8 @@ def post_consumption_connected():
         
         # Unpack: count(1) + [id(4)] * count
         count = struct.unpack('B', data[:1])[0]
+        if len(data) != 1 + count * 4:
+            return b'INVALID_DATA', 400, {'Content-Type': 'application/octet-stream'}
         offset = 1
         
         consumers = []
@@ -1022,6 +1041,8 @@ def register():
         
         # Update last activity to mark board as active (for liveliness detection)
         board.update_last_activity()
+        group_id = user.get('group_id', 'group1')
+        group_manager.persist_board(group_id, board)
         
         logger.info(f"Board {board_id} registered successfully")
         response = BoardBinaryProtocol.pack_registration_response(True, "Registration successful")
@@ -2307,9 +2328,12 @@ def add_building():
         return b'INVALID', 400
     building_type = data[0]
     uid_len = data[1]
-    if len(data) < 2 + uid_len:
+    if uid_len == 0 or len(data) != 2 + uid_len:
         return b'INVALID', 400
-    uid = data[2:2+uid_len].decode('utf-8')
+    try:
+        uid = data[2:2+uid_len].decode('utf-8')
+    except UnicodeDecodeError:
+        return b'INVALID_UID', 400
     user = getattr(request, 'user', {})
     board_id = user.get('username', '')
     if not board_id:
@@ -2318,8 +2342,17 @@ def add_building():
     board = user_game_state.get_board(board_id)
     if not board:
         return b'BOARD_NOT_FOUND', 404
-    board.add_building(building_type)
-    return b'OK', 200
+    result = board.register_building(uid, building_type)
+    if result == 'invalid':
+        return b'INVALID_BUILDING', 400
+    if result == 'conflict':
+        return b'UID_TYPE_CONFLICT', 409
+    if result == 'capacity':
+        return b'COUNT_LIMIT', 409
+
+    group_id = user.get('group_id', 'group1')
+    group_manager.persist_board(group_id, board)
+    return (b'ALREADY_REGISTERED' if result == 'duplicate' else b'OK'), 200
 
 @app.route('/board/get_counts', methods=['GET'])
 @require_board_auth
@@ -2358,7 +2391,9 @@ def lecturer_update_counts():
     data = request.get_json()
     board_id = data.get('board_id')
     counts = data.get('counts')
-    if not board_id or not counts or len(counts) != len(Enak.Building):
+    if (not board_id or not isinstance(counts, list) or
+        len(counts) != len(Enak.Building) or
+        not all(isinstance(value, int) and 0 <= value <= 255 for value in counts)):
         return jsonify({'error': 'Invalid data'}), 400
     user = getattr(request, 'user', {})
     group_id = user.get('group_id', 'group1')
@@ -2367,6 +2402,7 @@ def lecturer_update_counts():
     if not board:
         return jsonify({'error': 'Board not found'}), 404
     board.set_counts(counts)
+    group_manager.persist_board(group_id, board)
     return jsonify({'success': True})
 
 @app.route('/lecturer/production_overrides', methods=['GET', 'POST'])
