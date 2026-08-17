@@ -62,6 +62,10 @@ class GameState:
 
 		self.production_range_overrides = {}
 		self.consumption_overrides = {}
+		self.config_revision = 0
+
+	def bump_config_revision(self):
+		self.config_revision = (self.config_revision + 1) & 0xFFFFFFFF
 
 	def get_script(self) -> Script:
 		"""
@@ -92,6 +96,7 @@ class GameState:
 				board.reset_for_new_game()
 			except Exception as e:
 				print(f"Failed to reset board {board.id}: {e}", file=sys.stderr)
+		self.bump_config_revision()
 
 	def get_board(self, board_id: str) -> Optional['BoardState']:
 		"""
@@ -190,18 +195,22 @@ class GameState:
 
 	def set_production_override(self, source, min_val, max_val):
 		self.production_range_overrides[source] = (min_val, max_val)
+		self.bump_config_revision()
 
 	def clear_production_override(self, source):
 		self.production_range_overrides.pop(source, None)
+		self.bump_config_revision()
 
 	def get_consumption_override(self, building):
 		return self.consumption_overrides.get(building)
 
 	def set_consumption_override(self, building, value):
 		self.consumption_overrides[building] = value
+		self.bump_config_revision()
 
 	def clear_consumption_override(self, building):
 		self.consumption_overrides.pop(building, None)
+		self.bump_config_revision()
 
 
 class BoardState:

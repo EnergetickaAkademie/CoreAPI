@@ -34,6 +34,52 @@ class ProtocolCorrectnessTests(unittest.TestCase):
         payload = struct.pack(">ii", -125, 900)
         self.assertEqual(struct.unpack(">ii", payload), (-125, 900))
 
+    def test_sync_v2_request_round_trip(self):
+        payload = BoardBinaryProtocol.pack_sync_v2_request(
+            sequence=42,
+            production=-125,
+            consumption=900,
+            production_by_source=[0, 10, 20, 30, 40, 50, 60, 70, -80],
+        )
+        self.assertEqual(len(payload), 52)
+        self.assertEqual(
+            BoardBinaryProtocol.unpack_sync_v2_request(payload),
+            {
+                "sequence": 42,
+                "production": -125,
+                "consumption": 900,
+                "production_by_source": [0, 10, 20, 30, 40, 50, 60, 70, -80],
+            },
+        )
+
+    def test_sync_v2_response_round_trip(self):
+        payload = BoardBinaryProtocol.pack_sync_v2_response(
+            sequence=42,
+            config_revision=7,
+            game_active=True,
+            coefficients_milli=list(range(9)),
+            min_power_milli=list(range(-9, 0)),
+            max_power_milli=list(range(9, 18)),
+            consumption_milli=list(range(18)),
+            building_counts=list(range(18)),
+        )
+        self.assertEqual(len(payload), 210)
+        decoded = BoardBinaryProtocol.unpack_sync_v2_response(payload)
+        self.assertEqual(decoded["sequence"], 42)
+        self.assertEqual(decoded["config_revision"], 7)
+        self.assertTrue(decoded["game_active"])
+        self.assertEqual(decoded["min_power_milli"], list(range(-9, 0)))
+        self.assertEqual(decoded["building_counts"], list(range(18)))
+
+    def test_sync_v2_rejects_wrong_magic_and_length(self):
+        with self.assertRaises(BinaryProtocolError):
+            BoardBinaryProtocol.unpack_sync_v2_request(b"short")
+
+        payload = bytearray(BoardBinaryProtocol.pack_sync_v2_request(1, 2, 3, [0] * 9))
+        payload[0:2] = b"XX"
+        with self.assertRaises(BinaryProtocolError):
+            BoardBinaryProtocol.unpack_sync_v2_request(bytes(payload))
+
     def test_coefficients_reject_missing_sections(self):
         with self.assertRaises(BinaryProtocolError):
             BoardBinaryProtocol.unpack_coefficients_response(b"\x00")

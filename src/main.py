@@ -887,6 +887,81 @@ def post_values():
         logger.error(f"Error in post_values: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         return b'ERROR', 500, {'Content-Type': 'application/octet-stream'}
+
+
+@app.route('/board/sync/v2', methods=['POST'])
+@require_board_auth
+def board_sync_v2():
+    """Exchange telemetry and the complete board configuration in one request."""
+    try:
+        sync_request = BoardBinaryProtocol.unpack_sync_v2_request(request.get_data())
+        user = getattr(request, 'user', {})
+        board_id = user.get('username', '')
+        if not board_id:
+            return b'INVALID_BOARD', 400, {'Content-Type': 'application/octet-stream'}
+
+        user_game_state = get_user_game_state(request.user)
+        board = user_game_state.get_board(board_id)
+        if not board:
+            return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
+
+        script = user_game_state.get_script()
+        board.update_power(
+            sync_request['production'], sync_request['consumption'], script
+        )
+        for source in Source:
+            board.update_power_generation_by_type(
+                source.name,
+                float(sync_request['production_by_source'][source.value]),
+            )
+
+        coefficients = [0] * 9
+        min_power = [0] * 9
+        max_power = [0] * 9
+        consumption = [0] * len(Enak.Building)
+        group_id = user.get('group_id', 'group1')
+        game_active = group_manager.is_game_active(group_id)
+
+        if game_active and script:
+            current_coefficients = script.getCurrentProductionCoefficients()
+            for source in Source:
+                coefficients[source.value] = int(
+                    float(current_coefficients.get(source, 0.0)) * 1000
+                )
+
+                override = user_game_state.get_production_override(source)
+                power_range = override or script.getCurrentProductionRange(source)
+                if power_range:
+                    min_power[source.value] = int(float(power_range[0]) * 1000)
+                    max_power[source.value] = int(float(power_range[1]) * 1000)
+
+            for building in Enak.Building:
+                override = user_game_state.get_consumption_override(building)
+                value = (override if override is not None else
+                         script.getCurrentBuildingConsumption(building))
+                if value is not None:
+                    consumption[building.value] = int(float(value) * 1000)
+
+        response = BoardBinaryProtocol.pack_sync_v2_response(
+            sequence=sync_request['sequence'],
+            config_revision=user_game_state.config_revision,
+            game_active=game_active,
+            coefficients_milli=coefficients,
+            min_power_milli=min_power,
+            max_power_milli=max_power,
+            consumption_milli=consumption,
+            building_counts=board.get_counts(),
+        )
+        return response, 200, {
+            'Content-Type': 'application/octet-stream',
+            'Cache-Control': 'no-store',
+        }
+    except BinaryProtocolError as exc:
+        logger.warning(f"Invalid /board/sync/v2 packet: {exc}")
+        return b'PROTOCOL_ERROR', 400, {'Content-Type': 'application/octet-stream'}
+    except Exception as exc:
+        logger.error(f"Error in board_sync_v2: {exc}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return b'ERROR', 500, {'Content-Type': 'application/octet-stream'}
 
 @app.route('/prod_connected', methods=['POST'])
@@ -1153,6 +1228,7 @@ def next_round():
     
     # Do one step in the script
     if script.step():
+        user_game_state.bump_config_revision()
         current_round = script.current_round_index
         round_type = script.getCurrentRoundType()
         
@@ -1251,6 +1327,7 @@ def next_round():
         
         return jsonify(response_data)
     else:
+        user_game_state.bump_config_revision()
         # Game is finished, finalize current round for all boards
         user_game_state.finalize_all_boards_current_round()
         # prune stale / disconnected boards to free memory
@@ -2351,6 +2428,8 @@ def add_building():
         return b'COUNT_LIMIT', 409
 
     group_id = user.get('group_id', 'group1')
+    if result == 'added':
+        user_game_state.bump_config_revision()
     group_manager.persist_board(group_id, board)
     return (b'ALREADY_REGISTERED' if result == 'duplicate' else b'OK'), 200
 
@@ -2402,6 +2481,7 @@ def lecturer_update_counts():
     if not board:
         return jsonify({'error': 'Board not found'}), 404
     board.set_counts(counts)
+    user_game_state.bump_config_revision()
     group_manager.persist_board(group_id, board)
     return jsonify({'success': True})
 
@@ -2423,6 +2503,7 @@ def lecturer_production_overrides():
         data = request.get_json()
         if not data:
             user_game_state.production_range_overrides.clear()
+            user_game_state.bump_config_revision()
             return jsonify({'success': True})
         for source_name, vals in data.items():
             try:
@@ -2453,6 +2534,7 @@ def lecturer_consumption_overrides():
         data = request.get_json()
         if not data:
             user_game_state.consumption_overrides.clear()
+            user_game_state.bump_config_revision()
             return jsonify({'success': True})
         for building_name, value in data.items():
             try:
