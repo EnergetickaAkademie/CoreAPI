@@ -100,6 +100,34 @@ class ProtocolCorrectnessTests(unittest.TestCase):
         self.assertEqual(board.get_counts()[7], 1)
         self.assertEqual(board.get_counts()[8], 0)
 
+    def test_building_reset_clears_counts_and_uid_registrations(self):
+        board = BoardState("board1")
+        self.assertEqual(board.register_building("04-aabb", 7), "added")
+        self.assertEqual(board.register_building("04-ccdd", 8), "added")
+
+        board.clear_registered_buildings()
+
+        self.assertEqual(board.get_counts(), [0] * 18)
+        self.assertEqual(board.get_connected_buildings(), [])
+        self.assertEqual(board.register_building("04-aabb", 7), "added")
+
+    def test_lowering_authoritative_counts_prunes_stale_uids(self):
+        board = BoardState("board1")
+        self.assertEqual(board.register_building("04-aabb", 7), "added")
+        self.assertEqual(board.register_building("04-ccdd", 7), "added")
+
+        counts = board.get_counts()
+        counts[7] = 1
+        board.set_counts(counts)
+
+        self.assertEqual(board.get_counts()[7], 1)
+        self.assertEqual(len(board.get_connected_buildings()), 1)
+        removed_uid = ({"04-aabb", "04-ccdd"} - {
+            board.get_connected_buildings()[0]["uid"]
+        }).pop()
+        self.assertEqual(board.register_building(removed_uid, 7), "added")
+        self.assertEqual(board.get_counts()[7], 2)
+
     def test_board_state_survives_store_reopen(self):
         import tempfile
         from pathlib import Path

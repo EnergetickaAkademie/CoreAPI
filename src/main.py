@@ -1502,6 +1502,8 @@ def get_powerplant_history():
 @require_lecturer_auth
 def end_game():
     """End the current game"""
+    user = getattr(request, 'user', {})
+    group_id = user.get('group_id', 'group1')
     # Get user's game state
     user_game_state = get_user_game_state(request.user)
     
@@ -1513,12 +1515,12 @@ def end_game():
     # start without process restart is clean.
     try:
         user_game_state.reset_for_new_game()
+        group_manager.persist_all_boards(group_id)
     except Exception as e:
         print(f"Warning: failed to reset boards on end_game: {e}", file=sys.stderr)
     # Reset script to null/none (no active game)
     user_game_state.script = None
     
-    user = getattr(request, 'user', {})
     lecturer_name = user.get('username', 'Unknown Lecturer')
     
     return jsonify({
@@ -2433,6 +2435,26 @@ def add_building():
     group_manager.persist_board(group_id, board)
     return (b'ALREADY_REGISTERED' if result == 'duplicate' else b'OK'), 200
 
+@app.route('/board/reset_buildings', methods=['POST'])
+@require_board_auth
+def board_reset_buildings():
+    """Idempotently clear the authenticated board's NFC building state."""
+    user = getattr(request, 'user', {})
+    board_id = user.get('username', '')
+    if not board_id:
+        return b'INVALID_BOARD', 400
+
+    group_id = user.get('group_id', 'group1')
+    user_game_state = group_manager.get_game_state(group_id)
+    board = user_game_state.get_board(board_id)
+    if not board:
+        return b'BOARD_NOT_FOUND', 404
+
+    board.clear_registered_buildings()
+    user_game_state.bump_config_revision()
+    group_manager.persist_board(group_id, board)
+    return b'OK', 200
+
 @app.route('/board/get_counts', methods=['GET'])
 @require_board_auth
 def get_counts():
@@ -2484,6 +2506,27 @@ def lecturer_update_counts():
     user_game_state.bump_config_revision()
     group_manager.persist_board(group_id, board)
     return jsonify({'success': True})
+
+@app.route('/lecturer/reset_board_buildings', methods=['POST'])
+@require_lecturer_auth
+def lecturer_reset_board_buildings():
+    """Clear one board's NFC buildings without resetting its round history."""
+    data = request.get_json(silent=True) or {}
+    board_id = data.get('board_id')
+    if not board_id:
+        return jsonify({'error': 'board_id is required'}), 400
+
+    user = getattr(request, 'user', {})
+    group_id = user.get('group_id', 'group1')
+    user_game_state = group_manager.get_game_state(group_id)
+    board = user_game_state.get_board(board_id)
+    if not board:
+        return jsonify({'error': 'Board not found'}), 404
+
+    board.clear_registered_buildings()
+    user_game_state.bump_config_revision()
+    group_manager.persist_board(group_id, board)
+    return jsonify({'success': True, 'board_id': board_id})
 
 @app.route('/lecturer/production_overrides', methods=['GET', 'POST'])
 @require_lecturer_auth

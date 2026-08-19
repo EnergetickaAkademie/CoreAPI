@@ -525,6 +525,16 @@ class BoardState:
 		self.connected_buildings = []
 		self.update_last_activity()
 
+	def clear_registered_buildings(self):
+		"""Clear every NFC building registration and its authoritative count.
+
+		This intentionally leaves production settings and round history intact so
+		it can be used during an active scenario as an administrative reset.
+		"""
+		self.connected_buildings = []
+		self.authoritative_counts = [0] * len(Enak.Building)
+		self.update_last_activity()
+
 	def reset_for_new_game(self):
 		"""Reset transient state for a fresh scenario while keeping identity.
 
@@ -587,6 +597,21 @@ class BoardState:
 			not all(isinstance(value, int) and 0 <= value <= 255 for value in counts)):
 			raise ValueError("Building counts must be 18 byte-sized integers")
 		self.authoritative_counts = counts[:]
+
+		# The lecturer UI may reduce a count independently of the physical NFC
+		# registrations. Drop registrations that no longer fit the authoritative
+		# count; otherwise a tag removed in the UI would remain a duplicate and
+		# could never be scanned back in.
+		remaining = counts[:]
+		kept_buildings = []
+		for building in self.connected_buildings:
+			building_type = building.get("building_type")
+			if (isinstance(building_type, int) and
+				0 <= building_type < len(remaining) and
+				remaining[building_type] > 0):
+				kept_buildings.append(building)
+				remaining[building_type] -= 1
+		self.connected_buildings = kept_buildings
 		self.update_last_activity()
 
 	def get_counts(self) -> list:
