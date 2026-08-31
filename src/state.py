@@ -285,6 +285,13 @@ class BoardState:
 
 		#the building counts that the boards do not override
 		self.authoritative_counts = [0] * len(Enak.Building)
+		# Ephemeral transport/firmware metadata, refreshed on each board heartbeat.
+		self.network_address = None
+		self.ota_port = 8080
+		self.firmware_version = None
+		self.ota_ready = False
+		self.config_schema = 0
+		self.firmware_error = None
 
 	def is_connected(self) -> bool:
 		"""
@@ -582,7 +589,13 @@ class BoardState:
 			"current_round_index": self.current_round_index,
 			"power_generation_by_type": self.power_generation_by_type,
 			"connected_buildings": self.connected_buildings,
-			"authoritative_counts": self.authoritative_counts
+			"authoritative_counts": self.authoritative_counts,
+			"network_address": self.network_address,
+			"ota_port": self.ota_port,
+			"firmware_version": self.firmware_version,
+			"ota_ready": self.ota_ready,
+			"config_schema": self.config_schema,
+			"firmware_error": self.firmware_error
 		}
 
 	###### for board interactions with the building counts

@@ -10,6 +10,7 @@ import logging
 import traceback
 import random
 import numpy as np
+from werkzeug.middleware.proxy_fix import ProxyFix
 from state import GameState, available_scripts, available_script_generators, get_fresh_script, BoardState
 from simple_auth import require_lecturer_auth, require_board_auth, require_auth, optional_auth, auth
 from binary_protocol import BoardBinaryProtocol, BinaryProtocolError
@@ -18,6 +19,7 @@ from MeritOrder import Power
 from scoring import calculate_final_scores
 from weather_messages import WeatherMessageHandler
 from state_store import BoardStateStore
+from firmware_manager import FirmwareManager
 
 from building_constants import get_building_name
 
@@ -44,6 +46,7 @@ def convert_numpy_types(obj):
     return obj
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 
 # Configure debug mode from environment
 DEBUG_MODE = os.environ.get('DEBUG', 'false').lower() in ('true', '1', 'yes', 'on')
@@ -149,6 +152,12 @@ class GroupGameManager:
 
 # Initialize group game manager
 group_manager = GroupGameManager()
+
+firmware_manager = FirmwareManager(
+    os.environ.get('FIRMWARE_STATE_DIR', 'data/firmware'),
+    lambda group_id: group_manager.is_game_active(group_id),
+    lambda group_id, board_id: group_manager.get_game_state(group_id).get_board(board_id),
+)
 
 def generate_game_statistics(game_state: GameState):
     """
@@ -579,6 +588,26 @@ def get_user_game_state(user_info: dict) -> GameState:
         group_id = user_info.get('group_id', 'group1')
     return group_manager.get_game_state(group_id)
 
+
+def record_board_firmware_metadata(board: BoardState):
+    """Record only metadata supplied by an authenticated board heartbeat."""
+    board.network_address = request.remote_addr
+    try:
+        port = int(request.headers.get('X-ENAK-OTA-Port', board.ota_port or 8080))
+        if 1 <= port <= 65535:
+            board.ota_port = port
+    except (TypeError, ValueError):
+        pass
+    version = request.headers.get('X-ENAK-Firmware-Version')
+    if version and len(version) <= 64:
+        board.firmware_version = version
+    board.ota_ready = request.headers.get('X-ENAK-OTA-Ready', '0') == '1'
+    try:
+        board.config_schema = int(request.headers.get('X-ENAK-Config-Schema', board.config_schema or 0))
+    except (TypeError, ValueError):
+        pass
+    board.firmware_error = None
+
 def filter_effects_by_priority(display_data):
     """
     Filter effects to show only the highest priority effect for each power plant type.
@@ -720,6 +749,8 @@ def poll_binary():
         board = user_game_state.get_board(board_id)
         if not board:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
+
+        record_board_firmware_metadata(board)
 
         # Update last activity to mark board as active (for liveliness detection)
         board.update_last_activity()
@@ -875,6 +906,8 @@ def post_values():
         board = user_game_state.get_board(board_id)
         if not board:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
+
+        record_board_firmware_metadata(board)
         
         script = user_game_state.get_script()
         board.update_power(production, consumption, script)
@@ -904,6 +937,8 @@ def board_sync_v2():
         board = user_game_state.get_board(board_id)
         if not board:
             return b'BOARD_NOT_FOUND', 404, {'Content-Type': 'application/octet-stream'}
+
+        record_board_firmware_metadata(board)
 
         script = user_game_state.get_script()
         board.update_power(
@@ -1113,6 +1148,7 @@ def register():
         
         # Register the board (no need to validate board_id since it comes from verified JWT)
         board = user_game_state.register_board(board_id)
+        record_board_firmware_metadata(board)
         
         # Update last activity to mark board as active (for liveliness detection)
         board.update_last_activity()
@@ -1130,6 +1166,76 @@ def register():
         return response, 500, {'Content-Type': 'application/octet-stream'}
 
 # Frontend/Lecturer Endpoints
+
+@app.route('/lecturer/firmware/boards', methods=['GET'])
+@require_lecturer_auth
+def lecturer_firmware_boards():
+    user = getattr(request, 'user', {})
+    group_id = user.get('group_id', 'group1')
+    state = get_user_game_state(user)
+    configured = []
+    try:
+        from user_config import get_user_config
+        configured = list((get_user_config().config.get('boards') or {}).keys())
+    except Exception:
+        pass
+    board_ids = list(dict.fromkeys(list(state.boards.keys()) + configured))
+    result = []
+    for board_id in board_ids:
+        board = state.get_board(board_id)
+        if board is None:
+            result.append({'board_id': board_id, 'display_name': f'Tým {board_id}',
+                           'connected': False, 'ota_ready': False,
+                           'firmware_version': None, 'firmware_error': 'Board has not connected'})
+            continue
+        firmware_manager.probe(board)
+        data = board.to_dict()
+        data['ota_reachable'] = bool(board.network_address and not board.firmware_error)
+        result.append(data)
+    return jsonify({'boards': result, 'game_active': group_manager.is_game_active(group_id),
+                    'active_job': firmware_manager.active_job})
+
+
+@app.route('/lecturer/firmware/releases', methods=['GET'])
+@require_lecturer_auth
+def lecturer_firmware_releases():
+    try:
+        refresh = request.args.get('refresh', 'false').lower() in ('1', 'true', 'yes')
+        return jsonify(firmware_manager.releases(refresh=refresh))
+    except Exception as exc:
+        logger.warning('Firmware catalog unavailable: %s', exc)
+        return jsonify({'error': str(exc), 'stale': True}), 502
+
+
+@app.route('/lecturer/firmware/jobs', methods=['POST'])
+@require_lecturer_auth
+def lecturer_firmware_create_job():
+    user = getattr(request, 'user', {})
+    body = request.get_json(silent=True) or {}
+    board_ids = body.get('board_ids')
+    if isinstance(board_ids, str):
+        board_ids = [board_ids]
+    if not isinstance(board_ids, list) or not all(isinstance(item, str) for item in board_ids):
+        return jsonify({'error': 'board_ids must be a list of board IDs'}), 400
+    try:
+        job = firmware_manager.create_job(user.get('group_id', 'group1'), body.get('version'),
+                                          board_ids, bool(body.get('confirm_non_upgrade')))
+        return jsonify(job), 202
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 409
+    except Exception as exc:
+        logger.exception('Failed to create firmware job')
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/lecturer/firmware/jobs/<job_id>', methods=['GET'])
+@require_lecturer_auth
+def lecturer_firmware_job(job_id):
+    job = firmware_manager.get_job(job_id)
+    user = getattr(request, 'user', {})
+    if not job or job.get('group_id') != user.get('group_id', 'group1'):
+        return jsonify({'error': 'Firmware job not found'}), 404
+    return jsonify(job)
 
 @app.route('/scenarios', methods=['GET'])
 @require_lecturer_auth
