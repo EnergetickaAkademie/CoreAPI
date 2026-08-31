@@ -94,6 +94,7 @@ def is_game_active(script) -> bool:
 class GroupGameManager:
     def __init__(self):
         self.group_game_states = {}
+        self.completed_game_statistics = {}
         # Track explicit game end state per group to persist until new game starts
         self.game_ended_states = {}
         self.state_store = BoardStateStore(
@@ -124,14 +125,22 @@ class GroupGameManager:
         self.game_ended_states[group_id] = True
         debug_print(f"Game marked as ended for group {group_id}")
     
-    def start_new_game(self, group_id: str, script):
+    def start_new_game(self, group_id: str, script, scenario_id: str = None):
         """Start a new game for a group, clearing the ended state"""
         game_state = self.get_game_state(group_id)
         game_state.script = script
+        game_state.scenario_id = scenario_id
         game_state.reset_for_new_game()
+        self.completed_game_statistics.pop(group_id, None)
         self.persist_all_boards(group_id)
         self.game_ended_states[group_id] = False
         debug_print(f"New game started for group {group_id}, ended state cleared")
+
+    def store_completed_statistics(self, group_id: str, statistics: dict):
+        self.completed_game_statistics[group_id] = statistics
+
+    def get_completed_statistics(self, group_id: str):
+        return self.completed_game_statistics.get(group_id)
     
     def is_game_ended(self, group_id: str) -> bool:
         """Check if game is explicitly marked as ended for a group"""
@@ -182,19 +191,16 @@ def generate_game_statistics(game_state: GameState):
         "team_performance": {},
         "game_summary": {
             "total_rounds": 0,
-            "game_duration_minutes": 0,
-            "scenario_name": "Unknown"
+            "scenario_name": game_state.scenario_id or "Unknown"
         }
     }
     
     script = game_state.get_script()
     if script:
-        statistics["game_summary"]["total_rounds"] = len(script.rounds)
-        statistics["game_summary"]["scenario_name"] = script.__class__.__name__
+        statistics["game_summary"]["scenario_name"] = game_state.scenario_id or script.__class__.__name__
     
-    # Build history data in the format expected by the scoring system
-    # history = [round1_data, round2_data, ...]
-    # where round_data = {"Team A": {'productions': [(Power.NUCLEAR, 1500), ...], 'total_consumption': 1600}, ...}
+    # Build history data in the format expected by the scoring system.
+    # Board IDs are the stable team identity; display names are presentation data.
     
     # First, collect all rounds that were played by any board
     all_round_indices = set()
@@ -214,19 +220,11 @@ def generate_game_statistics(game_state: GameState):
             board_stats["average_production_by_type"] = {}
             statistics["boards"].append(board_stats)
             
-            # Add mock scores since we have no real data
-            statistics["team_performance"][board_id] = {
-                "team_name": board.display_name,
-                "team_number": board_id.replace('board', '') if board_id.startswith('board') else board_id,
-                "ecology": 50,
-                "elmix": 50,
-                "finances": 50,
-                "popularity": 50
-            }
         return statistics
     
     # Sort rounds chronologically
     sorted_rounds = sorted(all_round_indices)
+    statistics["game_summary"]["total_rounds"] = len(sorted_rounds)
     
     # Build history for scoring system
     history = []
@@ -235,8 +233,6 @@ def generate_game_statistics(game_state: GameState):
         round_data = {}
         
         for board_id, board in game_state.boards.items():
-            team_name = board.display_name
-            
             # Get data for this specific round from board history
             if round_index in board.round_history:
                 history_idx = board.round_history.index(round_index)
@@ -275,35 +271,17 @@ def generate_game_statistics(game_state: GameState):
                         # Legacy boards (pre prod_connected update) – attribute to GAS to keep scoring working
                         productions.append((Power.GAS, total_production))
                 
-                round_data[team_name] = {
+                round_data[board_id] = {
                     'productions': productions,
-                    'total_consumption': total_consumption
-                }
-            else:
-                # Board didn't participate in this round
-                round_data[team_name] = {
-                    'productions': [],
-                    'total_consumption': 0
+                    'total_consumption': total_consumption,
+                    'round_index': round_index
                 }
         
         history.append(round_data)
     
     # Calculate real scores using the scoring system
-    try:
-        logger.debug("Attempting to calculate scores with history format check...")
-        # Debug: Print first entry format
-        if history:
-            logger.debug(f"First history entry sample: {list(history[0].items())[0] if history[0] else 'Empty'}")
-            
-        final_scores = calculate_final_scores(history)
-        logger.debug(f"Calculated final scores: {final_scores}")
-    except Exception as e:
-        logger.error(f"Error calculating scores: {e}")
-        logger.debug(f"History data: {history}")
-        # Try to provide a more detailed error trace
-        import traceback
-        logger.debug(f"Full traceback: {traceback.format_exc()}")
-        final_scores = {}
+    final_scores = calculate_final_scores(history)
+    logger.debug(f"Calculated final scores: {final_scores}")
     
     # Process each board's complete data
     for board_id, board in game_state.boards.items():
@@ -340,36 +318,18 @@ def generate_game_statistics(game_state: GameState):
         statistics["boards"].append(board_stats)
         
         # Get real team performance data from scoring system
-        team_name = board.display_name
         team_number = board_id.replace('board', '') if board_id.startswith('board') else board_id
         
-        if team_name in final_scores:
-            scores = final_scores[team_name]
+        if board_id in final_scores:
+            scores = final_scores[board_id]
             statistics["team_performance"][board_id] = {
-                "team_name": team_name,
+                "team_name": board.display_name,
                 "team_number": team_number,
-                "ecology": convert_numpy_types(scores.get("eco", 0)),
-                "elmix": convert_numpy_types(scores.get("emx", 0)),
-                "finances": convert_numpy_types(scores.get("fin", 0)),
-                "popularity": convert_numpy_types(scores.get("pop", 0))
-            }
-        else:
-            # Fallback to basic calculated scores if scoring system fails
-            total_production = sum(board.production_history) if board.production_history else 0
-            total_consumption = sum(board.consumption_history) if board.consumption_history else 0
-            energy_balance = total_production - total_consumption
-            
-            # Simple scoring based on energy balance (basic fallback)
-            balance_score = max(0, min(100, 100 - abs(energy_balance) / max(total_consumption, 1) * 10))
-            
-            logger.debug(f"No scores found for team {team_name}, using calculated fallback")
-            statistics["team_performance"][board_id] = {
-                "team_name": team_name,
-                "team_number": team_number,
-                "ecology": balance_score,
-                "elmix": balance_score,
-                "finances": balance_score,
-                "popularity": balance_score
+                "ecology": convert_numpy_types(scores["ecology"]),
+                "finances": convert_numpy_types(scores["finances"]),
+                "stability": convert_numpy_types(scores["stability"]),
+                "development": convert_numpy_types(scores["development"]),
+                "popularity": convert_numpy_types(scores["popularity"])
             }
     
     # Log statistics to console for debugging
@@ -391,12 +351,31 @@ def generate_game_statistics(game_state: GameState):
             
             team_perf = statistics["team_performance"].get(board_id, {})
             logger.debug(f"  Performance - Ecology: {team_perf.get('ecology', 0)}%, "
-                        f"ElMix: {team_perf.get('elmix', 0)}%, "
+                        f"Stability: {team_perf.get('stability', 0)}%, "
                         f"Finances: {team_perf.get('finances', 0)}%, "
                         f"Popularity: {team_perf.get('popularity', 0)}%")
         
         logger.debug("=== END GAME STATISTICS ===")
     
+    return statistics
+
+
+def finalize_completed_game(group_id: str, game_state: GameState):
+    """Capture final statistics once, then clear transient game state."""
+    existing = group_manager.get_completed_statistics(group_id)
+    if existing is not None and game_state.get_script() is None:
+        return existing
+
+    game_state.finalize_all_boards_current_round()
+    statistics = convert_numpy_types(generate_game_statistics(game_state))
+    group_manager.store_completed_statistics(group_id, statistics)
+
+    # Capture all participants before removing disconnected boards.
+    game_state.prune_disconnected_boards()
+    game_state.reset_for_new_game()
+    game_state.script = None
+    group_manager.persist_all_boards(group_id)
+    group_manager.mark_game_ended(group_id)
     return statistics
 
 # Display text translations for the dashboard
@@ -1271,7 +1250,7 @@ def start_game_scenario():
         return jsonify({"error": str(e)}), 400
     
     # Start new game through group manager - this clears ended state and resets boards
-    group_manager.start_new_game(group_id, script)
+    group_manager.start_new_game(group_id, script, scenario_id)
     
     # DON'T automatically advance - let frontend decide when to start
     
@@ -1434,23 +1413,9 @@ def next_round():
         return jsonify(response_data)
     else:
         user_game_state.bump_config_revision()
-        # Game is finished, finalize current round for all boards
-        user_game_state.finalize_all_boards_current_round()
-        # prune stale / disconnected boards to free memory
-        user_game_state.prune_disconnected_boards()
-        # Generate game statistics for display (requires script metadata)
-        game_statistics = generate_game_statistics(user_game_state)
-
-        # Mark game as ended: clear active script so polling/reporting shows inactive
-        try:
-            user_game_state.script = None
-        except Exception:
-            pass
-        
-        # Mark game as explicitly ended in the group manager
         user = getattr(request, 'user', {})
         group_id = user.get('group_id', 'group1')
-        group_manager.mark_game_ended(group_id)
+        game_statistics = finalize_completed_game(group_id, user_game_state)
         debug_print(f"Game finished and marked as ended for group {group_id}")
         
         return jsonify({
@@ -1524,11 +1489,11 @@ def get_game_statistics():
             "error": "Game is still active. Statistics are only available after game completion."
         }), 400
     
-    # Generate comprehensive game statistics
-    game_statistics = generate_game_statistics(user_game_state)
-    
-    # Convert any NumPy types to JSON-serializable types
-    game_statistics = convert_numpy_types(game_statistics)
+    game_statistics = group_manager.get_completed_statistics(
+        request.user.get('group_id', 'group1')
+    )
+    if game_statistics is None:
+        game_statistics = convert_numpy_types(generate_game_statistics(user_game_state))
     
     # Create board names mapping for frontend
     from user_config import get_user_config
@@ -1554,9 +1519,9 @@ def get_game_statistics():
         "board_names": board_names,
         "game_status": {
             "current_round": script.current_round_index if script else 0,
-            "total_rounds": len(script.rounds) if script else 0,
+            "total_rounds": game_statistics["game_summary"]["total_rounds"],
             "game_active": script is not None and script.current_round_index < len(script.rounds),
-            "scenario": script.__class__.__name__ if script else None
+            "scenario": game_statistics["game_summary"]["scenario_name"]
         }
     })
 
@@ -1613,26 +1578,15 @@ def end_game():
     # Get user's game state
     user_game_state = get_user_game_state(request.user)
     
-    # Finalize current round for all boards before ending the game
-    user_game_state.finalize_all_boards_current_round()
-    # Remove any boards that are no longer connected (timeout passed)
-    user_game_state.prune_disconnected_boards()
-    # Clear transient per-game data (esp. connected buildings) so a future
-    # start without process restart is clean.
-    try:
-        user_game_state.reset_for_new_game()
-        group_manager.persist_all_boards(group_id)
-    except Exception as e:
-        print(f"Warning: failed to reset boards on end_game: {e}", file=sys.stderr)
-    # Reset script to null/none (no active game)
-    user_game_state.script = None
+    game_statistics = finalize_completed_game(group_id, user_game_state)
     
     lecturer_name = user.get('username', 'Unknown Lecturer')
     
     return jsonify({
         "status": "success",
         "message": "Game ended",
-        "ended_by": lecturer_name
+        "ended_by": lecturer_name,
+        "game_statistics": game_statistics
     })
 
 @app.route('/pollforusers', methods=['GET'])

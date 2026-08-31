@@ -1,368 +1,236 @@
+"""Final scoring for completed energy-management games."""
+
 from collections import defaultdict
+from typing import Dict, Iterable, List, Mapping, Tuple
+
 from MeritOrder import MeritOrder, Power
-from typing import List, Tuple, Dict
-import numpy as np
-import json
-import os
-import sys
-from copy import deepcopy
 
-# Global debug flag from environment variable
-DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
-
-def debug_print(message):
-    """Print debug message only if DEBUG is enabled"""
-    if DEBUG:
-        print(f"DEBUG: {message}")
 
 prices = {
-	Power.COAL: 101,
-	Power.GAS: 132,
-	Power.NUCLEAR: 15,
-	Power.WATER: 0,
-	Power.WATER_STORAGE: 0,
-	Power.WIND: 0,
-	Power.PHOTOVOLTAIC: 0,
-	Power.BATTERY: 0,
+    Power.COAL: 101,
+    Power.GAS: 132,
+    Power.NUCLEAR: 15,
+    Power.WATER: 0,
+    Power.WATER_STORAGE: 0,
+    Power.WIND: 0,
+    Power.PHOTOVOLTAIC: 0,
+    Power.BATTERY: 0,
 }
 
 co2eq = {
-	Power.COAL: 1,
-	Power.GAS: 0.5,
-	Power.NUCLEAR: 0,
-	Power.WATER: 0,
-	Power.WATER_STORAGE: 0,
-	Power.WIND: 0,
-	Power.PHOTOVOLTAIC: 0,
-	Power.BATTERY: 0,
+    Power.COAL: 1,
+    Power.GAS: 0.5,
+    Power.NUCLEAR: 0,
+    Power.WATER: 0,
+    Power.WATER_STORAGE: 0,
+    Power.WIND: 0,
+    Power.PHOTOVOLTAIC: 0,
+    Power.BATTERY: 0,
 }
 
-BALANCE_CUTOFF_PERCENT = 1 #percent
-
-MAX_POPULARITY_MW = 5210
-
-def get_team_stats(history):
-	team_stats = defaultdict()
-
-	for t in history[0]:
-		team_stats[t] = dict()
-		team_stats[t]["productions"] = []
-		team_stats[t]["consumptions"] = []
-	
-	for r in history: #for each round
-		for team in r:
-			team_stats[team]["productions"].append(r[team]["productions"])
-			team_stats[team]["consumptions"].append(r[team]["total_consumption"])
-
-	return team_stats
-
-def get_last_building_consumption(team_stats, team):
-	return team_stats[team]["consumptions"][-1]
-
-def get_num_rounds(history):
-	return len(history)
-
-def get_teams(history):
-	return list(history[0].keys())
-
-def get_total_consumption(team_stats, team):
-	return np.sum(team_stats[team]["consumptions"])
-
-def get_min_co2():
-	return 0
-
-def get_max_co2(team_stats, team):
-	total_cons = get_total_consumption(team_stats, team)
-	return co2eq[Power.COAL] * total_cons
-
-def get_co2(team_stats, team):
-	consumptions = team_stats[team]["consumptions"]
-	productions = team_stats[team]["productions"]
-
-	co2 = []
-
-	for (c, p) in zip(consumptions, productions):
-		mo = MeritOrder(prices, p, c)
-		co2.append(mo.getReleasedCO2())
-
-	return np.sum(co2)
-
-def get_ecology_score(team_stats, team):
-	min_co2 = get_min_co2()
-	max_co2 = get_max_co2(team_stats, team)
-	co2 = get_co2(team_stats, team)
-
-	if max_co2 == min_co2:
-		return 100.0
-	
-	score = 100 * (1 - (co2 - min_co2) / (max_co2 - min_co2))
-
-	return max(0, min(100, score))
-
-def get_max_price(team_stats, team):
-	total_cons = get_total_consumption(team_stats, team)
-	return prices[Power.GAS] * total_cons
-
-def get_expenses(team_stats, team):
-	consumptions = team_stats[team]["consumptions"]
-	productions = team_stats[team]["productions"]
-
-	expenses = []
-
-	for (c, p) in zip(consumptions, productions):
-		mo = MeritOrder(prices, p, c)
-		expenses.append(mo.getTotalExpenses())
-
-	return np.sum(expenses)
-
-def get_min_price():
-	return 0
-
-def get_finances_score(team_stats, team):
-	min_exp = get_min_price()
-	max_exp = get_max_price(team_stats, team)
-	exp = get_expenses(team_stats, team)
-
-	if max_exp == min_exp:
-		return 100.0
-	
-	score = 100 * (1 - (exp - min_exp) / (max_exp - min_exp))
-
-	return max(0, min(100, score))
-
-def get_prod_sums(prod):
-	res = []
-	
-	for p in prod:
-		res.append(sum(x for _,x in p))
-
-	return res
-
-def get_prod_diffs(team_stats, team):
-	consumptions = np.array(team_stats[team]["consumptions"])
-	productions = np.array(get_prod_sums(team_stats[team]["productions"]))
-
-	return (consumptions - productions), consumptions, productions
-
-def get_balance(team_stats, team, num_rounds):
-	pd, c, p = get_prod_diffs(team_stats, team)
-
-	one_round = 1 / num_rounds
-
-	one_perc = []
-
-	for r in c:
-		one_perc.append(BALANCE_CUTOFF_PERCENT * 0.01 * r)
-
-	balance_stats = []
-
-	for pdif, op in zip(pd, one_perc):
-		if abs(pdif) <= 1:
-			balance_stats.append(one_round)
-		
-		elif abs(pdif) > op:
-			balance_stats.append(0)
-
-		else:
-			err = (abs(pdif) / op) * one_round if op != 0 else 0
-
-			balance_stats.append(err)
-
-		#print(f"op: {op}, abspdif: {abs(pdif)}")
-
-	#print(f"bs: {balance_stats}")
-
-	return balance_stats
-
-def get_balance_score(team_stats, team, num_rounds):
-	bal = get_balance(team_stats, team, num_rounds)
-
-	return np.sum(bal)
-
-def get_max_building_popularity():
-	return MAX_POPULARITY_MW
-
-def get_min_building_popularity():
-	return 0
-
-def get_building_popularity(team_stats, team):
-	min_pop = get_min_building_popularity()
-	max_pop = get_max_building_popularity()
-
-	pop = get_total_consumption(team_stats, team)
-
-	if max_pop == min_pop:
-		return 100.0
-
-	score = 100 * (pop - min_pop) / (max_pop - min_pop)
-
-	return max(0, min(100, score))
-
-def get_scores(team_stats, team, num_rounds):
-	emx = get_balance_score(team_stats, team, num_rounds) * 100
-	fin = get_finances_score(team_stats, team)
-	eco = get_ecology_score(team_stats, team)
-	pop = (emx + 2 * fin + eco + 2 * get_building_popularity(team_stats, team)) / 6 #0 - 100
-	
-	return {
-		"emx" : round(emx, 2),
-		"fin" : round(fin, 2),
-		"eco" : round(eco, 2),
-		"pop" : round(pop, 2),
-	}
-
-def calculate_final_scores(history):
-	import sys
-	debug_print(f"history = {history}")
-	
-
-	ts = get_team_stats(history)
-	teams = get_teams(history)
-
-	num_rounds = get_num_rounds(history)
-
-	scores = dict()
-
-	for t in teams:
-		scores[t] = get_scores(ts, t, num_rounds)
-
-	return scores
+BALANCE_CUTOFF_PERCENT = 1
+BALANCE_DEADBAND_MW = 1
 
 
-if __name__ == "__main__":
-	# history = [
-	# 	# --- Round 1 ---
-	# 	{
-	# 		"Team A": {'productions': [(Power.NUCLEAR, 1500), (Power.WIND, 100)], 'total_consumption': 1600},
-	# 		"Team B": {'productions': [(Power.COAL, 1000), (Power.GAS, 800)], 'total_consumption': 1800},
-	# 		"Team C": {'productions': [(Power.NUCLEAR, 800), (Power.GAS, 400), (Power.WIND, 100)], 'total_consumption': 1300},
-	# 		"Team D": {'productions': [(Power.WATER, 2500)], 'total_consumption': 2000},
-	# 		"Team E": {'productions': [(Power.WIND, 1200), (Power.PHOTOVOLTAIC, 400)], 'total_consumption': 1500},
-	# 	},
-	# 	# --- Round 2 ---
-	# 	{
-	# 		"Team A": {'productions': [(Power.NUCLEAR, 1500), (Power.WIND, 300)], 'total_consumption': 1800},
-	# 		"Team B": {'productions': [(Power.COAL, 1200), (Power.GAS, 800)], 'total_consumption': 2000},
-	# 		"Team C": {'productions': [(Power.NUCLEAR, 800), (Power.GAS, 500), (Power.WIND, 200)], 'total_consumption': 1500},
-	# 		"Team D": {'productions': [(Power.WATER, 2500)], 'total_consumption': 2200},
-	# 		"Team E": {'productions': [(Power.WIND, 1400), (Power.PHOTOVOLTAIC, 600)], 'total_consumption': 1700}, # Barely meeting demand
-	# 	},
-	# 	# --- Round 3 ---
-	# 	{
-	# 		"Team A": {'productions': [(Power.NUCLEAR, 1500), (Power.WIND, 500), (Power.PHOTOVOLTAIC, 10)], 'total_consumption': 2000},
-	# 		"Team B": {'productions': [(Power.COAL, 1300), (Power.GAS, 900)], 'total_consumption': 2200},
-	# 		"Team C": {'productions': [(Power.NUCLEAR, 900), (Power.GAS, 500), (Power.WIND, 300)], 'total_consumption': 1700},
-	# 		"Team D": {'productions': [(Power.WATER, 2500), (Power.GAS, 100)], 'total_consumption': 2400}, # Demand exceeds hydro
-	# 		"Team E": {'productions': [(Power.WIND, 1000), (Power.PHOTOVOLTAIC, 400)], 'total_consumption': 1900}, # BLACKOUT!
-	# 	},
-	# 	# --- Round 4 ---
-	# 	{
-	# 		"Team A": {'productions': [(Power.NUCLEAR, 2000), (Power.WIND, 500)], 'total_consumption': 2200}, # New nuclear plant
-	# 		"Team B": {'productions': [(Power.COAL, 1500), (Power.GAS, 1000)], 'total_consumption': 2400},
-	# 		"Team C": {'productions': [(Power.NUCLEAR, 900), (Power.GAS, 600), (Power.WIND, 400)], 'total_consumption': 1900},
-	# 		"Team D": {'productions': [(Power.WATER, 2500), (Power.GAS, 300)], 'total_consumption': 2600},
-	# 		"Team E": {'productions': [(Power.WIND, 2000), (Power.PHOTOVOLTAIC, 800)], 'total_consumption': 2100},
-	# 	},
-	# 	# --- Round 5 ---
-	# 	{
-	# 		"Team A": {'productions': [(Power.NUCLEAR, 2000), (Power.WIND, 700), (Power.PHOTOVOLTAIC, 100)], 'total_consumption': 2400},
-	# 		"Team B": {'productions': [(Power.COAL, 1600), (Power.GAS, 1100)], 'total_consumption': 2600},
-	# 		"Team C": {'productions': [(Power.NUCLEAR, 1000), (Power.GAS, 600), (Power.WIND, 500)], 'total_consumption': 2100},
-	# 		"Team D": {'productions': [(Power.WATER, 2500), (Power.GAS, 500)], 'total_consumption': 2800},
-	# 		"Team E": {'productions': [(Power.WIND, 1500), (Power.PHOTOVOLTAIC, 600), (Power.GAS, 100)], 'total_consumption': 2300}, # Added a gas peaker
-	# 	},
-	# 	# --- Round 6 ---
-	# 	{
-	# 		"Team A": {'productions': [(Power.NUCLEAR, 2000), (Power.WIND, 900), (Power.PHOTOVOLTAIC, 300)], 'total_consumption': 2600},
-	# 		"Team B": {'productions': [(Power.COAL, 1800), (Power.GAS, 1200)], 'total_consumption': 2800},
-	# 		"Team C": {'productions': [(Power.NUCLEAR, 1000), (Power.GAS, 700), (Power.WIND, 600)], 'total_consumption': 2300},
-	# 		"Team D": {'productions': [(Power.WATER, 2500), (Power.COAL, 500)], 'total_consumption': 3000}, # Built a coal plant
-	# 		"Team E": {'productions': [(Power.WIND, 1200), (Power.PHOTOVOLTAIC, 500), (Power.GAS, 100)], 'total_consumption': 2500}, # BLACKOUT!
-	# 	},
-	# 	# --- Round 7 ---
-	# 	{
-	# 		"Team A": {'productions': [(Power.NUCLEAR, 2500), (Power.WIND, 1000)], 'total_consumption': 2800}, # Another nuclear plant
-	# 		"Team B": {'productions': [(Power.COAL, 2000), (Power.GAS, 1200)], 'total_consumption': 3000},
-	# 		"Team C": {'productions': [(Power.NUCLEAR, 1200), (Power.GAS, 700), (Power.WIND, 700)], 'total_consumption': 2500},
-	# 		"Team D": {'productions': [(Power.WATER, 2500), (Power.COAL, 800)], 'total_consumption': 3200},
-	# 		"Team E": {'productions': [(Power.WIND, 2500), (Power.PHOTOVOLTAIC, 1000), (Power.GAS, 200)], 'total_consumption': 2700},
-	# 	},
-	# 	# --- Round 8 ---
-	# 	{
-	# 		"Team A": {'productions': [(Power.NUCLEAR, 2500), (Power.WIND, 1200), (Power.PHOTOVOLTAIC, 300)], 'total_consumption': 3000},
-	# 		"Team B": {'productions': [(Power.COAL, 2200), (Power.GAS, 1300)], 'total_consumption': 3200},
-	# 		"Team C": {'productions': [(Power.NUCLEAR, 1200), (Power.GAS, 800), (Power.WIND, 800)], 'total_consumption': 2700},
-	# 		"Team D": {'productions': [(Power.WATER, 2500), (Power.COAL, 1000)], 'total_consumption': 3400},
-	# 		"Team E": {'productions': [(Power.WIND, 1800), (Power.PHOTOVOLTAIC, 800), (Power.GAS, 200)], 'total_consumption': 2900}, # Another blackout!
-	# 	},
-	# 	# --- Round 9 ---
-	# 	{
-	# 		"Team A": {'productions': [(Power.NUCLEAR, 2500), (Power.WIND, 1500), (Power.PHOTOVOLTAIC, 400)], 'total_consumption': 3200},
-	# 		"Team B": {'productions': [(Power.COAL, 2400), (Power.GAS, 1400)], 'total_consumption': 3400},
-	# 		"Team C": {'productions': [(Power.NUCLEAR, 1200), (Power.GAS, 900), (Power.WIND, 900)], 'total_consumption': 2900},
-	# 		"Team D": {'productions': [(Power.WATER, 2500), (Power.COAL, 1200)], 'total_consumption': 3600},
-	# 		"Team E": {'productions': [(Power.WIND, 3000), (Power.PHOTOVOLTAIC, 1200), (Power.GAS, 200)], 'total_consumption': 3100},
-	# 	},
-	# 	# --- Round 10 ---
-	# 	{
-	# 		"Team A": {'productions': [(Power.NUCLEAR, 3000), (Power.WIND, 1500)], 'total_consumption': 3400},
-	# 		"Team B": {'productions': [(Power.COAL, 2500), (Power.GAS, 1500)], 'total_consumption': 3600},
-	# 		"Team C": {'productions': [(Power.NUCLEAR, 1500), (Power.GAS, 1000), (Power.WIND, 1000)], 'total_consumption': 3100},
-	# 		"Team D": {'productions': [(Power.WATER, 2500), (Power.COAL, 1500)], 'total_consumption': 3800},
-	# 		"Team E": {'productions': [(Power.WIND, 2000), (Power.PHOTOVOLTAIC, 1000), (Power.GAS, 500)], 'total_consumption': 3300},
-	# 	},
-	# ]
+def _clamp(value: float, minimum: float = 0.0, maximum: float = 100.0) -> float:
+    return max(minimum, min(maximum, value))
 
-	history = [
-		{
-			"Team A": {'productions': [(Power.NUCLEAR, 1500), (Power.WIND, 100)], 'total_consumption': 1600.5},
-		},
-		{
-			"Team A": {'productions': [(Power.NUCLEAR, 1500), (Power.WIND, 300)], 'total_consumption': 1800},
-		},
-		{
-			"Team A": {'productions': [(Power.NUCLEAR, 1500), (Power.WIND, 500), (Power.PHOTOVOLTAIC, 100)], 'total_consumption': 2100.5},
-		},
-		{
-			"Team A": {'productions': [(Power.NUCLEAR, 2000), (Power.WIND, 500)], 'total_consumption': 2505},
-		},
-		{
-			"Team A": {'productions': [(Power.NUCLEAR, 2000), (Power.WIND, 700), (Power.PHOTOVOLTAIC, 100)], 'total_consumption': 2800},
-		},
-		{
-			"Team A": {'productions': [(Power.NUCLEAR, 2000), (Power.WIND, 900), (Power.PHOTOVOLTAIC, 300)], 'total_consumption': 3200.5},
-		},
-		{
-			"Team A": {'productions': [(Power.NUCLEAR, 2500), (Power.WIND, 1000)], 'total_consumption': 3500},
-		},
-		{
-			"Team A": {'productions': [(Power.NUCLEAR, 2500), (Power.WIND, 1200), (Power.PHOTOVOLTAIC, 300)], 'total_consumption': 4000.5},
-		},
-		{
-			"Team A": {'productions': [(Power.NUCLEAR, 2900), (Power.WIND, 1500), (Power.PHOTOVOLTAIC, 400), (Power.BATTERY, -400)], 'total_consumption': 4400},
-		},
-		{
-			"Team A": {'productions': [(Power.NUCLEAR, 3000), (Power.WIND, 1500)], 'total_consumption': 4460},
-		},
-	]
 
-	history = [{'Team 1': {'productions': [(Power.COAL, 1000.0)], 'total_consumption': 1000}}, {'Team 1': {'productions': [(Power.COAL, 1000.0)], 'total_consumption': 1002}}, {'Team 1': {'productions': [(Power.COAL, 1000.0)], 'total_consumption': 1000}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0)], 'total_consumption': 1200}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0)], 'total_consumption': 1200}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0)], 'total_consumption': 1605}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0)], 'total_consumption': 1605}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0), (Power.WIND, 200.0), (Power.PHOTOVOLTAIC, 405.0)], 'total_consumption': 1605}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0), (Power.WIND, 200.0), (Power.PHOTOVOLTAIC, 405.0)], 'total_consumption': 1605}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0), (Power.WIND, 200.0), (Power.PHOTOVOLTAIC, 405.0)], 'total_consumption': 1605}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0), (Power.WIND, 200.0), (Power.PHOTOVOLTAIC, 405.0)], 'total_consumption': 1605}}, {'Team 1': {'productions': [(Power.COAL, 100.0), (Power.NUCLEAR, 1000.0), (Power.GAS, 200.0), (Power.WIND, 200.0), (Power.PHOTOVOLTAIC, 405.0)], 'total_consumption': 1605}}]
-	
-	history = [{'Team 5': {'productions': [(Power.GAS, 420.0)], 'total_consumption': 420.0}},
-			{'Team 5': {'productions': [(Power.GAS, 420.0)], 'total_consumption': 420.0}},
-			{'Team 5': {'productions': [(Power.GAS, 419.9)], 'total_consumption': 420.0}},
-			{'Team 5': {'productions': [(Power.GAS, 290.4)], 'total_consumption': 290.0}},
-			{'Team 5': {'productions': [(Power.GAS, 980.0)], 'total_consumption': 980.0}},
-			{'Team 5': {'productions': [(Power.GAS, 950.0)], 'total_consumption': 760.0}},
-			{'Team 5': {'productions': [(Power.GAS, 1201.0)], 'total_consumption': 980.0}},
-			{'Team 5': {'productions': [(Power.GAS, 1201.0)], 'total_consumption': 760.0}},
-			{'Team 5': {'productions': [(Power.GAS, 1201.0)], 'total_consumption': 980.0}},
-			{'Team 5': {'productions': [(Power.GAS, 1201.0)], 'total_consumption': 760.0}},
-			{'Team 5': {'productions': [(Power.GAS, 1201.0)], 'total_consumption': 760.0}},
-			{'Team 5': {'productions': [(Power.GAS, 1001.0)], 'total_consumption': 760.0}},
-			{'Team 5': {'productions': [(Power.GAS, 980.399)], 'total_consumption': 980.0}},
-			{'Team 5': {'productions': [(Power.GAS, 950.0)], 'total_consumption': 760.0}}]
+def _positive_productions(productions: Iterable[Tuple[Power, float]]) -> List[Tuple[Power, float]]:
+    return [(power, amount) for power, amount in productions if amount > 0]
 
-	final_scores = calculate_final_scores(history)
 
-	debug_print(f"fs: {final_scores}")
+def _production_total(productions: Iterable[Tuple[Power, float]]) -> float:
+    return sum(amount for _, amount in _positive_productions(productions))
+
+
+def get_team_stats(history: List[Mapping[str, Mapping]]) -> Dict[str, Dict[str, list]]:
+    team_stats = defaultdict(lambda: {
+        "productions": [],
+        "consumptions": [],
+        "round_indices": [],
+    })
+
+    for round_data in history:
+        for board_id, data in round_data.items():
+            team_stats[board_id]["productions"].append(data["productions"])
+            team_stats[board_id]["consumptions"].append(data["total_consumption"])
+            team_stats[board_id]["round_indices"].append(data.get("round_index"))
+
+    return dict(team_stats)
+
+
+def get_num_rounds(history: List[Mapping]) -> int:
+    return len(history)
+
+
+def get_teams(history: List[Mapping]) -> List[str]:
+    teams = []
+    for round_data in history:
+        for team in round_data:
+            if team not in teams:
+                teams.append(team)
+    return teams
+
+
+def get_total_consumption(team_stats: Mapping, team: str) -> float:
+    return sum(max(0.0, value) for value in team_stats[team]["consumptions"])
+
+
+def get_last_building_consumption(team_stats: Mapping, team: str) -> float:
+    consumptions = team_stats[team]["consumptions"]
+    return consumptions[-1] if consumptions else 0.0
+
+
+def _round_cost_and_emissions(productions, consumption: float) -> Tuple[float, float, float]:
+    demand = max(0.0, consumption)
+    clean_productions = _positive_productions(productions)
+    available = _production_total(clean_productions)
+    served = min(available, demand)
+    merit_order = MeritOrder(prices, clean_productions, demand)
+    return merit_order.getTotalExpenses(), merit_order.getReleasedCO2(), served
+
+
+def get_expenses(team_stats: Mapping, team: str) -> float:
+    return sum(
+        _round_cost_and_emissions(productions, consumption)[0]
+        for productions, consumption in zip(
+            team_stats[team]["productions"], team_stats[team]["consumptions"]
+        )
+    )
+
+
+def get_co2(team_stats: Mapping, team: str) -> float:
+    return sum(
+        _round_cost_and_emissions(productions, consumption)[1]
+        for productions, consumption in zip(
+            team_stats[team]["productions"], team_stats[team]["consumptions"]
+        )
+    )
+
+
+def _served_and_demand(team_stats: Mapping, team: str) -> Tuple[float, float]:
+    demand = 0.0
+    served = 0.0
+    for productions, consumption in zip(
+        team_stats[team]["productions"], team_stats[team]["consumptions"]
+    ):
+        round_demand = max(0.0, consumption)
+        demand += round_demand
+        served += min(_production_total(productions), round_demand)
+    return served, demand
+
+
+def get_ecology_score(team_stats: Mapping, team: str) -> float:
+    served, demand = _served_and_demand(team_stats, team)
+    if demand <= 0 or served <= 0:
+        return 0.0
+
+    emissions = get_co2(team_stats, team)
+    quality = 1 - emissions / (co2eq[Power.COAL] * served)
+    return _clamp(100 * (served / demand) * quality)
+
+
+def get_finances_score(team_stats: Mapping, team: str) -> float:
+    served, demand = _served_and_demand(team_stats, team)
+    if demand <= 0 or served <= 0:
+        return 0.0
+
+    expenses = get_expenses(team_stats, team)
+    quality = 1 - expenses / (prices[Power.GAS] * served)
+    return _clamp(100 * (served / demand) * quality)
+
+
+def get_prod_sums(productions: List[List[Tuple[Power, float]]]) -> List[float]:
+    return [_production_total(round_productions) for round_productions in productions]
+
+
+def get_prod_diffs(team_stats: Mapping, team: str):
+    consumptions = team_stats[team]["consumptions"]
+    productions = get_prod_sums(team_stats[team]["productions"])
+    return [consumption - production for consumption, production in zip(consumptions, productions)], consumptions, productions
+
+
+def _stability_fraction(production: float, consumption: float) -> float:
+    demand = max(0.0, consumption)
+    error = abs(demand - production)
+    cutoff = BALANCE_CUTOFF_PERCENT * 0.01 * demand
+
+    if error <= BALANCE_DEADBAND_MW:
+        return 1.0
+    if cutoff <= BALANCE_DEADBAND_MW or error >= cutoff:
+        return 0.0
+    return _clamp((cutoff - error) / (cutoff - BALANCE_DEADBAND_MW), 0.0, 1.0)
+
+
+def get_balance(team_stats: Mapping, team: str, num_rounds: int = None) -> List[float]:
+    return [
+        _stability_fraction(production, consumption)
+        for production, consumption in zip(
+            get_prod_sums(team_stats[team]["productions"]),
+            team_stats[team]["consumptions"],
+        )
+    ]
+
+
+def get_balance_score(team_stats: Mapping, team: str, num_rounds: int = None) -> float:
+    balance = get_balance(team_stats, team, num_rounds)
+    return sum(balance) / len(balance) if balance else 0.0
+
+
+def get_development_scores(history: List[Mapping], team_stats: Mapping) -> Dict[str, float]:
+    if not history:
+        return {team: 0.0 for team in team_stats}
+
+    final_round = history[-1]
+    final_consumptions = {
+        team: max(0.0, data.get("total_consumption", 0.0))
+        for team, data in final_round.items()
+    }
+    highest_consumption = max(final_consumptions.values(), default=0.0)
+
+    if highest_consumption <= 0:
+        return {team: 0.0 for team in team_stats}
+
+    return {
+        team: _clamp(100 * final_consumptions.get(team, 0.0) / highest_consumption)
+        for team in team_stats
+    }
+
+
+def get_building_popularity(team_stats: Mapping, team: str, development_scores: Mapping[str, float] = None) -> float:
+    if development_scores is None:
+        development_scores = {team: 0.0}
+    return development_scores.get(team, 0.0)
+
+
+def get_scores(team_stats: Mapping, team: str, num_rounds: int = None, development_scores: Mapping[str, float] = None) -> Dict[str, float]:
+    ecology = get_ecology_score(team_stats, team)
+    finances = get_finances_score(team_stats, team)
+    stability = 100 * get_balance_score(team_stats, team, num_rounds)
+    development = get_building_popularity(team_stats, team, development_scores)
+    popularity = (stability + finances + ecology + 2 * development) / 5
+
+    return {
+        "ecology": round(_clamp(ecology), 2),
+        "finances": round(_clamp(finances), 2),
+        "stability": round(_clamp(stability), 2),
+        "development": round(_clamp(development), 2),
+        "popularity": round(_clamp(popularity), 2),
+    }
+
+
+def calculate_final_scores(history: List[Mapping]) -> Dict[str, Dict[str, float]]:
+    if not history:
+        return {}
+
+    team_stats = get_team_stats(history)
+    development_scores = get_development_scores(history, team_stats)
+    scores = {}
+
+    for team in get_teams(history):
+        if get_total_consumption(team_stats, team) <= 0:
+            continue
+        scores[team] = get_scores(team_stats, team, len(history), development_scores)
+
+    return scores

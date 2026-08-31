@@ -59,6 +59,7 @@ class GameState:
 	def __init__(self, script):
 		self.boards: Dict[str, 'BoardState'] = {}
 		self.script = script
+		self.scenario_id = None
 
 		self.production_range_overrides = {}
 		self.consumption_overrides = {}
@@ -335,6 +336,11 @@ class BoardState:
 		Only saves for game rounds (DAY/NIGHT), not for slide rounds.
 		This should be called when advancing to the next round.
 		"""
+		# A final round may be finalized after it was already saved while
+		# advancing. Keep history idempotent by round index.
+		if self.current_round_index >= 0 and self.round_history and self.round_history[-1] == self.current_round_index:
+			return
+
 		# Only save history for game rounds (DAY/NIGHT)
 		if script and self.current_round_index >= 0:
 			current_round = script.getCurrentRound()
