@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import queue
 import re
 import sqlite3
@@ -15,6 +14,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 import requests
+import toml
+from user_config import get_user_config
 
 
 MAX_FIRMWARE_BYTES = 16 * 1024 * 1024
@@ -95,11 +96,19 @@ class FirmwareManager:
         self.store = FirmwareStore(str(self.state_dir / "firmware_jobs.db"))
         self.get_game_active = get_game_active
         self.get_board = get_board
-        self.shared_ota_password = os.getenv("OTA_PASSWORD", "")
-        self.github_repo = os.getenv("FIRMWARE_GITHUB_REPOSITORY", "EnergetickaAkademie/v2-firmware")
-        self.manifest_url = os.getenv("FIRMWARE_MANIFEST_URL", "").strip()
-        self.cache_seconds = max(30, int(os.getenv("FIRMWARE_CATALOG_CACHE_SECONDS", "300")))
-        self.ota_port = int(os.getenv("FIRMWARE_OTA_PORT", "8080"))
+        settings = self._load_settings()
+        try:
+            firmware = settings["firmware"]
+            self.github_repo = str(firmware["github_repository"]).strip()
+            self.manifest_url = str(firmware["manifest_url"]).strip()
+            self.github_token = str(firmware["github_token"]).strip()
+            self.cache_seconds = max(30, int(firmware["catalog_cache_seconds"]))
+            self.ota_port = int(firmware["ota_port"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("config/firmware.toml must define the firmware settings") from exc
+        if not self.github_repo and not self.manifest_url:
+            raise RuntimeError("config/firmware.toml must define github_repository or manifest_url")
+        self.user_config = get_user_config()
         self.catalog_cache = None
         self.catalog_at = 0.0
         self.catalog_stale = False
@@ -114,15 +123,41 @@ class FirmwareManager:
         for job in recovered_jobs:
             self.work.put(job["id"])
 
+    @staticmethod
+    def _load_settings() -> dict[str, Any]:
+        """Load firmware settings from the deployment config directory."""
+        config_path = Path("config/firmware.toml")
+        try:
+            with config_path.open("r", encoding="utf-8") as config_file:
+                settings = toml.load(config_file)
+        except (OSError, toml.TomlDecodeError) as exc:
+            raise RuntimeError(f"Could not load firmware configuration from {config_path}: {exc}") from exc
+        if not isinstance(settings, dict):
+            raise RuntimeError(f"Could not load firmware configuration from {config_path}: top-level value must be a TOML table")
+        return settings
+
+    def _ota_password(self, board_id: str) -> str:
+        return self.user_config.get_board_ota_password(board_id)
+
     def probe(self, board):
         """Refresh version/readiness from the board's last trusted address."""
         address = getattr(board, "network_address", None)
-        if not address or not self.shared_ota_password:
+        if not address:
+            return
+        try:
+            password = self._ota_password(board.id)
+        except RuntimeError as exc:
+            board.ota_ready = False
+            board.firmware_error = str(exc)
+            return
+        if len(password) < 8:
+            board.ota_ready = False
+            board.firmware_error = "OTA password is not configured for this board"
             return
         port = getattr(board, "ota_port", 0) or self.ota_port
         try:
             response = requests.get(f"http://{address}:{port}/ota/status",
-                                    headers={"X-OTA-Password": self.shared_ota_password}, timeout=(1, 2))
+                                    headers={"X-OTA-Password": password}, timeout=(1, 2))
             if not response.ok:
                 board.firmware_error = f"OTA status HTTP {response.status_code}"
                 return
@@ -144,9 +179,11 @@ class FirmwareManager:
             board.firmware_error = str(exc)
 
     def _github_releases(self):
+        if not self.github_repo:
+            return []
         headers = {"Accept": "application/vnd.github+json"}
-        if os.getenv("GITHUB_TOKEN"):
-            headers["Authorization"] = f"Bearer {os.getenv('GITHUB_TOKEN')}"
+        if self.github_token:
+            headers["Authorization"] = f"Bearer {self.github_token}"
         response = requests.get(f"https://api.github.com/repos/{self.github_repo}/releases",
                                 headers=headers, params={"per_page": 100}, timeout=(5, 15))
         response.raise_for_status()
@@ -187,7 +224,7 @@ class FirmwareManager:
         if not self.manifest_url:
             return []
         if not self.manifest_url.startswith("https://"):
-            raise ValueError("FIRMWARE_MANIFEST_URL must use HTTPS")
+            raise ValueError("firmware.manifest_url must use HTTPS")
         response = requests.get(self.manifest_url, timeout=(5, 15))
         response.raise_for_status()
         result = []
@@ -342,11 +379,12 @@ class FirmwareManager:
             board["state"] = "uploading"
             self.store.save(job)
             try:
-                if not self.shared_ota_password:
-                    raise ValueError("OTA_PASSWORD is not configured in CoreAPI")
+                password = self._ota_password(board["board_id"])
+                if len(password) < 8:
+                    raise ValueError("OTA password is not configured for this board")
                 url = f"http://{board['address']}:{board['port']}/ota/firmware"
                 with image.open("rb") as stream:
-                    response = requests.post(url, headers={"X-OTA-Password": self.shared_ota_password},
+                    response = requests.post(url, headers={"X-OTA-Password": password},
                                              files={"firmware": ("mb_firmware.bin", stream, "application/octet-stream")},
                                              timeout=(5, 180))
                 if not response.ok:
@@ -358,7 +396,7 @@ class FirmwareManager:
                 while time.time() < deadline:
                     try:
                         status = requests.get(f"http://{board['address']}:{board['port']}/ota/status",
-                                              headers={"X-OTA-Password": self.shared_ota_password}, timeout=(2, 3))
+                                              headers={"X-OTA-Password": password}, timeout=(2, 3))
                         if status.ok:
                             payload = status.json()
                             if payload.get("board_id") == board["board_id"] and payload.get("firmware_version") == job["version"]:

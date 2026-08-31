@@ -154,6 +154,16 @@ class UserConfig:
         board_info = boards.get(board_id, {})
         display_name = board_info.get("display_name")
         return display_name
+
+    def get_board_ota_password(self, board_id: str) -> str:
+        """Get the per-board OTA password from configuration."""
+        boards = self.config.get("boards", {})
+        if board_id not in boards or "ota_password" not in boards[board_id]:
+            raise RuntimeError(f"Board {board_id} has no ota_password configured")
+        password = boards[board_id]["ota_password"]
+        if not isinstance(password, str):
+            raise RuntimeError(f"Board {board_id} ota_password must be a string")
+        return password.strip()
     
     def reload(self):
         """Reload configuration from file"""
