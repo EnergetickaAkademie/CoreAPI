@@ -293,6 +293,12 @@ class BoardState:
 		self.ota_ready = False
 		self.config_schema = 0
 		self.firmware_error = None
+		self.firmware_protocol = 0
+		self.firmware_last_seen = 0.0
+		self.firmware_transport = None
+		self.firmware_job_id = None
+		self.firmware_job_state = None
+		self.firmware_job_error = None
 
 	def is_connected(self) -> bool:
 		"""
@@ -601,7 +607,13 @@ class BoardState:
 			"firmware_version": self.firmware_version,
 			"ota_ready": self.ota_ready,
 			"config_schema": self.config_schema,
-			"firmware_error": self.firmware_error
+			"firmware_error": self.firmware_error,
+			"firmware_protocol": self.firmware_protocol,
+			"firmware_last_seen": self.firmware_last_seen,
+			"firmware_transport": self.firmware_transport,
+			"firmware_job_id": self.firmware_job_id,
+			"firmware_job_state": self.firmware_job_state,
+			"firmware_job_error": self.firmware_job_error
 		}
 
 	###### for board interactions with the building counts

@@ -71,6 +71,21 @@ class ProtocolCorrectnessTests(unittest.TestCase):
         self.assertEqual(decoded["min_power_milli"], list(range(-9, 0)))
         self.assertEqual(decoded["building_counts"], list(range(18)))
 
+    def test_sync_v2_firmware_mode_flag_preserves_fixed_size(self):
+        payload = BoardBinaryProtocol.pack_sync_v2_response(
+            sequence=1,
+            config_revision=2,
+            game_active=False,
+            firmware_mode=True,
+            coefficients_milli=[0] * 9,
+            min_power_milli=[0] * 9,
+            max_power_milli=[0] * 9,
+            consumption_milli=[0] * 18,
+            building_counts=[0] * 18,
+        )
+        self.assertEqual(len(payload), 210)
+        self.assertTrue(BoardBinaryProtocol.unpack_sync_v2_response(payload)["firmware_mode"])
+
     def test_sync_v2_rejects_wrong_magic_and_length(self):
         with self.assertRaises(BinaryProtocolError):
             BoardBinaryProtocol.unpack_sync_v2_request(b"short")

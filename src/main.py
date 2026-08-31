@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 import pickle
 import os
@@ -6,6 +6,7 @@ import json
 import time
 import sys
 import struct
+import threading
 import logging
 import traceback
 import random
@@ -95,6 +96,9 @@ class GroupGameManager:
     def __init__(self):
         self.group_game_states = {}
         self.completed_game_statistics = {}
+        self.firmware_page_leases = {}
+        self.firmware_job_groups = set()
+        self.firmware_lease_lock = threading.Lock()
         # Track explicit game end state per group to persist until new game starts
         self.game_ended_states = {}
         self.state_store = BoardStateStore(
@@ -159,6 +163,23 @@ class GroupGameManager:
         """Get list of all group IDs"""
         return list(self.group_game_states.keys())
 
+    def touch_firmware_page(self, group_id: str):
+        with self.firmware_lease_lock:
+            self.firmware_page_leases[group_id] = time.time() + 15
+
+    def mark_firmware_job_started(self, group_id: str):
+        with self.firmware_lease_lock:
+            self.firmware_job_groups.add(group_id)
+
+    def mark_firmware_job_finished(self, group_id: str):
+        with self.firmware_lease_lock:
+            self.firmware_job_groups.discard(group_id)
+
+    def is_firmware_mode_active(self, group_id: str) -> bool:
+        with self.firmware_lease_lock:
+            return (self.firmware_page_leases.get(group_id, 0) > time.time() or
+                    group_id in self.firmware_job_groups)
+
 # Initialize group game manager
 group_manager = GroupGameManager()
 
@@ -166,6 +187,8 @@ firmware_manager = FirmwareManager(
     os.environ.get('FIRMWARE_STATE_DIR', 'data/firmware'),
     lambda group_id: group_manager.is_game_active(group_id),
     lambda group_id, board_id: group_manager.get_game_state(group_id).get_board(board_id),
+    group_manager.mark_firmware_job_started,
+    group_manager.mark_firmware_job_finished,
 )
 
 def generate_game_statistics(game_state: GameState):
@@ -580,7 +603,14 @@ def record_board_firmware_metadata(board: BoardState):
     version = request.headers.get('X-ENAK-Firmware-Version')
     if version and len(version) <= 64:
         board.firmware_version = version
-    board.ota_ready = request.headers.get('X-ENAK-OTA-Ready', '0') == '1'
+    protocol = request.headers.get('X-ENAK-Firmware-Protocol')
+    if protocol:
+        try:
+            board.firmware_protocol = int(protocol)
+        except (TypeError, ValueError):
+            board.firmware_protocol = 0
+    if request.headers.get('X-ENAK-OTA-Ready') == '1':
+        board.ota_ready = True
     try:
         board.config_schema = int(request.headers.get('X-ENAK-Config-Schema', board.config_schema or 0))
     except (TypeError, ValueError):
@@ -965,6 +995,10 @@ def board_sync_v2():
             max_power_milli=max_power,
             consumption_milli=consumption,
             building_counts=board.get_counts(),
+            firmware_mode=(
+                group_manager.is_firmware_mode_active(group_id) and
+                board.firmware_protocol >= 1
+            ),
         )
         return response, 200, {
             'Content-Type': 'application/octet-stream',
@@ -977,6 +1011,53 @@ def board_sync_v2():
         logger.error(f"Error in board_sync_v2: {exc}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         return b'ERROR', 500, {'Content-Type': 'application/octet-stream'}
+
+
+@app.route('/board/firmware/sync', methods=['POST'])
+@require_board_auth
+def board_firmware_sync():
+    """Exchange firmware metadata and an optional pull-OTA command."""
+    try:
+        user = getattr(request, 'user', {})
+        board_id = user.get('username', '')
+        group_id = user.get('group_id', 'group1')
+        board = get_user_game_state(user).get_board(board_id)
+        if not board:
+            return jsonify({'error': 'BOARD_NOT_FOUND'}), 404
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({'error': 'Firmware metadata must be a JSON object'}), 400
+        record_board_firmware_metadata(board)
+        board.update_last_activity()
+        result = firmware_manager.record_firmware_sync(group_id, board, payload)
+        active = group_manager.is_firmware_mode_active(group_id)
+        result['firmware_mode'] = active
+        if not active:
+            result['command'] = None
+        return jsonify(result)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        logger.exception('Error in board_firmware_sync')
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/board/firmware/jobs/<job_id>/image', methods=['GET'])
+@require_board_auth
+def board_firmware_image(job_id):
+    """Stream a verified firmware artifact to its assigned board."""
+    user = getattr(request, 'user', {})
+    board_id = user.get('username', '')
+    group_id = user.get('group_id', 'group1')
+    try:
+        board = get_user_game_state(user).get_board(board_id)
+        image = firmware_manager.get_pull_image(group_id, board_id, job_id)
+        if board:
+            board.update_last_activity()
+        return send_file(image, mimetype='application/octet-stream', conditional=True,
+                         download_name='mb_firmware.bin')
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 404
 
 @app.route('/prod_connected', methods=['POST'])
 @require_board_auth
@@ -1167,12 +1248,25 @@ def lecturer_firmware_boards():
                            'connected': False, 'ota_ready': False,
                            'firmware_version': None, 'firmware_error': 'Board has not connected'})
             continue
-        firmware_manager.probe(board)
         data = board.to_dict()
-        data['ota_reachable'] = bool(board.network_address and not board.firmware_error)
+        data['ota_reachable'] = bool(
+            board.firmware_protocol >= 1 and
+            board.firmware_last_seen and
+            time.time() - board.firmware_last_seen <= 10 and
+            not board.firmware_error
+        )
         result.append(data)
     return jsonify({'boards': result, 'game_active': group_manager.is_game_active(group_id),
                     'active_job': firmware_manager.active_job})
+
+
+@app.route('/lecturer/firmware/session', methods=['POST'])
+@require_lecturer_auth
+def lecturer_firmware_session():
+    user = getattr(request, 'user', {})
+    group_id = user.get('group_id', 'group1')
+    group_manager.touch_firmware_page(group_id)
+    return jsonify({'active': True, 'lease_seconds': 15})
 
 
 @app.route('/lecturer/firmware/releases', methods=['GET'])

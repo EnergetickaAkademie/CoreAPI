@@ -19,6 +19,7 @@ SYNC_V2_VERSION = 2
 SYNC_V2_SOURCE_COUNT = 9
 SYNC_V2_BUILDING_COUNT = 18
 SYNC_V2_FLAG_GAME_ACTIVE = 0x01
+SYNC_V2_FLAG_FIRMWARE_MODE = 0x02
 SYNC_V2_REQUEST = struct.Struct('>2sBBIii9i')
 SYNC_V2_RESPONSE_HEADER = struct.Struct('>2sBBII')
 SYNC_V2_RESPONSE_VALUES = struct.Struct('>45i18B')
@@ -72,7 +73,7 @@ class BoardBinaryProtocol:
     def pack_sync_v2_response(sequence: int, config_revision: int, game_active: bool,
                               coefficients_milli: List[int], min_power_milli: List[int],
                               max_power_milli: List[int], consumption_milli: List[int],
-                              building_counts: List[int]) -> bytes:
+                              building_counts: List[int], firmware_mode: bool = False) -> bytes:
         """Pack one atomic 210-byte configuration/count snapshot."""
         if any(len(values) != SYNC_V2_SOURCE_COUNT for values in (
                 coefficients_milli, min_power_milli, max_power_milli)):
@@ -85,6 +86,8 @@ class BoardBinaryProtocol:
             raise BinaryProtocolError("sync v2 building counts must be 18 bytes")
 
         flags = SYNC_V2_FLAG_GAME_ACTIVE if game_active else 0
+        if firmware_mode:
+            flags |= SYNC_V2_FLAG_FIRMWARE_MODE
         try:
             header = SYNC_V2_RESPONSE_HEADER.pack(
                 SYNC_V2_MAGIC, SYNC_V2_VERSION, flags, sequence, config_revision
@@ -110,7 +113,7 @@ class BoardBinaryProtocol:
         )
         if magic != SYNC_V2_MAGIC or version != SYNC_V2_VERSION:
             raise BinaryProtocolError("Unsupported sync response magic or version")
-        if flags & ~SYNC_V2_FLAG_GAME_ACTIVE:
+        if flags & ~(SYNC_V2_FLAG_GAME_ACTIVE | SYNC_V2_FLAG_FIRMWARE_MODE):
             raise BinaryProtocolError("Unsupported sync v2 response flags")
 
         values = SYNC_V2_RESPONSE_VALUES.unpack_from(data, SYNC_V2_RESPONSE_HEADER.size)
@@ -118,6 +121,7 @@ class BoardBinaryProtocol:
             "sequence": sequence,
             "config_revision": config_revision,
             "game_active": bool(flags & SYNC_V2_FLAG_GAME_ACTIVE),
+            "firmware_mode": bool(flags & SYNC_V2_FLAG_FIRMWARE_MODE),
             "coefficients_milli": list(values[0:9]),
             "min_power_milli": list(values[9:18]),
             "max_power_milli": list(values[18:27]),
