@@ -484,16 +484,36 @@ class FirmwareManager:
             password = self._ota_password(board["board_id"])
             if len(password) < 8:
                 raise ValueError("OTA password is not configured for this board")
-            url = f"http://{board['address']}:{board['port']}/ota/firmware"
+            base_url = f"http://{board['address']}:{board['port']}"
+            headers = {"X-OTA-Password": password}
+
+            # A failed status probe is safe to move to pull transport because
+            # no firmware bytes have been sent. Once the upload POST starts,
+            # any connection error is final to avoid a second installation.
             try:
-                with image.open("rb") as stream:
-                    response = requests.post(url, headers={"X-OTA-Password": password},
-                                             files={"firmware": ("mb_firmware.bin", stream, "application/octet-stream")},
-                                             timeout=(5, 180))
-            except requests.ConnectionError:
+                status = requests.get(f"{base_url}/ota/status", headers=headers,
+                                      timeout=(2, 3))
+            except requests.RequestException:
                 board["transport"] = "pull"
                 self._wait_for_pull_board(job, board)
                 return
+            if not status.ok:
+                raise RuntimeError(
+                    f"Board status returned HTTP {status.status_code}: "
+                    f"{status.text[:200]}")
+            status_payload = status.json()
+            if (status_payload.get("board_id") and
+                    status_payload["board_id"] != board["board_id"]):
+                raise RuntimeError("OTA endpoint belongs to a different board")
+
+            with image.open("rb") as stream:
+                response = requests.post(
+                    f"{base_url}/ota/firmware",
+                    headers=headers,
+                    files={"firmware": (
+                        "mb_firmware.bin", stream, "application/octet-stream")},
+                    timeout=(5, 180),
+                )
             if not response.ok:
                 raise RuntimeError(f"Board returned HTTP {response.status_code}: {response.text[:200]}")
             board["state"] = "rebooting"
@@ -502,8 +522,11 @@ class FirmwareManager:
             verified = False
             while time.time() < deadline:
                 try:
-                    status = requests.get(f"http://{board['address']}:{board['port']}/ota/status",
-                                          headers={"X-OTA-Password": password}, timeout=(2, 3))
+                    status = requests.get(
+                        f"{base_url}/ota/status",
+                        headers=headers,
+                        timeout=(2, 3),
+                    )
                     if status.ok:
                         payload = status.json()
                         if payload.get("board_id") == board["board_id"] and payload.get("firmware_version") == job["version"]:
