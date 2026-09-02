@@ -32,6 +32,19 @@ class BoardStateStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mqtt_event_results (
+                    group_id TEXT NOT NULL,
+                    board_id TEXT NOT NULL,
+                    boot_id INTEGER NOT NULL,
+                    event_id INTEGER NOT NULL,
+                    ack_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (group_id, board_id, boot_id, event_id)
+                )
+                """
+            )
 
     def save(self, group_id: str, board_id: str, state: Dict[str, Any]):
         counts_json = json.dumps(state["authoritative_counts"], separators=(",", ":"))
@@ -73,3 +86,35 @@ class BoardStateStore:
                 # Ignore a corrupt row; a subsequent registration can replace it.
                 continue
         return restored
+
+    def get_mqtt_event_ack(self, group_id: str, board_id: str,
+                           boot_id: int, event_id: int) -> Dict[str, Any] | None:
+        """Return the original acknowledgement for an already applied event."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT ack_json FROM mqtt_event_results
+                WHERE group_id = ? AND board_id = ? AND boot_id = ? AND event_id = ?
+                """, (group_id, board_id, boot_id, event_id)
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            value = json.loads(row[0])
+        except (TypeError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    def save_mqtt_event_ack(self, group_id: str, board_id: str,
+                            boot_id: int, event_id: int,
+                            ack: Dict[str, Any]) -> None:
+        """Persist an application-level MQTT event result idempotently."""
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO mqtt_event_results
+                    (group_id, board_id, boot_id, event_id, ack_json)
+                VALUES (?, ?, ?, ?, ?)
+                """, (group_id, board_id, boot_id, event_id,
+                       json.dumps(ack, separators=(",", ":")))
+            )

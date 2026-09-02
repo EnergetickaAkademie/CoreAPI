@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask import Flask, request, jsonify, send_file, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
 import pickle
 import os
@@ -11,6 +11,7 @@ import logging
 import traceback
 import random
 import numpy as np
+from queue import Empty
 from werkzeug.middleware.proxy_fix import ProxyFix
 from state import GameState, available_scripts, available_script_generators, get_fresh_script, BoardState
 from simple_auth import require_lecturer_auth, require_board_auth, require_auth, optional_auth, auth
@@ -21,6 +22,10 @@ from scoring import calculate_final_scores
 from weather_messages import WeatherMessageHandler
 from state_store import BoardStateStore
 from firmware_manager import FirmwareManager
+from mqtt_gateway import MqttGateway
+from mqtt_protocol import (MqttProtocolError, decode_json, pack_state,
+                           unpack_telemetry, topic_root)
+from sse_hub import EventHub
 
 from building_constants import get_building_name
 
@@ -182,6 +187,7 @@ class GroupGameManager:
 
 # Initialize group game manager
 group_manager = GroupGameManager()
+event_hub = EventHub(history_size=512)
 
 firmware_manager = FirmwareManager(
     os.environ.get('FIRMWARE_STATE_DIR', 'data/firmware'),
@@ -190,6 +196,328 @@ firmware_manager = FirmwareManager(
     group_manager.mark_firmware_job_started,
     group_manager.mark_firmware_job_finished,
 )
+
+
+def mqtt_board_group(board_id: str) -> str:
+    """Resolve a broker-authenticated board to its configured group."""
+    try:
+        from user_config import get_user_config
+        board = (get_user_config().config.get("boards") or {}).get(board_id, {})
+        return str(board.get("group", "group1"))
+    except Exception:
+        return "group1"
+
+
+def authoritative_state_values(group_id: str, board: BoardState) -> tuple:
+    """Build the single authoritative vector snapshot for v2 and v3."""
+    state = group_manager.get_game_state(group_id)
+    script = state.get_script()
+    coefficients = [0] * 9
+    min_power = [0] * 9
+    max_power = [0] * 9
+    consumption = [0] * len(Enak.Building)
+    game_active = group_manager.is_game_active(group_id)
+    if game_active and script:
+        current = script.getCurrentProductionCoefficients()
+        for source in Source:
+            coefficients[source.value] = int(float(current.get(source, 0.0)) * 1000)
+            override = state.get_production_override(source)
+            ranges = override or script.getCurrentProductionRange(source)
+            if ranges:
+                min_power[source.value] = int(float(ranges[0]) * 1000)
+                max_power[source.value] = int(float(ranges[1]) * 1000)
+        for building in Enak.Building:
+            override = state.get_consumption_override(building)
+            value = override if override is not None else script.getCurrentBuildingConsumption(building)
+            if value is not None:
+                consumption[building.value] = int(float(value) * 1000)
+    return (state, game_active, coefficients, min_power, max_power,
+            consumption, board.get_counts())
+
+
+def mqtt_state_payload(group_id: str, board: BoardState) -> bytes:
+    """Build the same authoritative snapshot used by the HTTP sync path."""
+    state, game_active, coefficients, min_power, max_power, consumption, counts = \
+        authoritative_state_values(group_id, board)
+    return pack_state(
+        mqtt_gateway.epoch, state.config_revision, game_active,
+        group_manager.is_firmware_mode_active(group_id), coefficients,
+        min_power, max_power, consumption, counts,
+    )
+
+
+def publish_mqtt_board_state(group_id: str, board: BoardState) -> None:
+    if mqtt_gateway.healthy:
+        mqtt_gateway.publish_state(board.id, mqtt_state_payload(group_id, board))
+
+
+def publish_mqtt_group_state(group_id: str) -> None:
+    state = group_manager.get_game_state(group_id)
+    for board in list(state.boards.values()):
+        publish_mqtt_board_state(group_id, board)
+
+
+def emit_board_delta(group_id: str, board: BoardState) -> None:
+    event_hub.publish(group_id, "board_delta", board.to_dict())
+
+
+def emit_game_delta(group_id: str, data: dict) -> None:
+    event_hub.publish(group_id, "game_delta", convert_numpy_types(data))
+
+
+def handle_mqtt_telemetry(board_id: str, payload: bytes) -> None:
+    try:
+        telemetry = unpack_telemetry(payload)
+    except MqttProtocolError:
+        return
+    group_id = mqtt_board_group(board_id)
+    state = group_manager.get_game_state(group_id)
+    board = state.get_board(board_id) or state.register_board(board_id)
+    previous_boot = board.mqtt_boot_id
+    previous_sequence = board.mqtt_last_sequence
+    if previous_boot == telemetry["boot_id"] and previous_sequence is not None:
+        delta = (telemetry["sequence"] - previous_sequence) & 0xffffffff
+        if delta == 0 or delta >= 0x80000000:
+            return
+    board.mqtt_boot_id = telemetry["boot_id"]
+    board.mqtt_last_sequence = telemetry["sequence"]
+    board.mqtt_last_seen = time.time()
+    board.mqtt_online = True
+    board.firmware_transport = "mqtt-v3"
+    script = state.get_script()
+    board.update_power(telemetry["production"], telemetry["consumption"], script)
+    for source in Source:
+        board.update_power_generation_by_type(
+            source.name, float(telemetry["production_by_source"][source.value])
+        )
+    emit_board_delta(group_id, board)
+
+
+def handle_mqtt_availability(board_id: str, payload: bytes) -> None:
+    try:
+        message = decode_json(payload)
+    except MqttProtocolError:
+        return
+    group_id = mqtt_board_group(board_id)
+    state = group_manager.get_game_state(group_id)
+    board = state.get_board(board_id) or state.register_board(board_id)
+    board.mqtt_online = bool(message.get("online"))
+    board.mqtt_last_seen = time.time()
+    board.firmware_transport = "mqtt-v3" if board.mqtt_online else "http-v2"
+    if board.mqtt_online:
+        board.mqtt_boot_id = message.get("boot_id")
+        # Reconcile/reissue an unfinished pull-OTA command when a board
+        # reconnects. Firmware progress is fed through the same durable job
+        # transition code as /board/firmware/sync.
+        if isinstance(message.get("firmware_version"), str):
+            try:
+                result = firmware_manager.record_firmware_sync(group_id, board, {
+                    "protocol": 1,
+                    "firmware_version": message["firmware_version"],
+                    "config_schema": message.get("config_schema", 0),
+                    "ota_port": message.get("ota_port", board.ota_port),
+                    "state": message.get("state", "idle"),
+                    "job_id": message.get("job_id"),
+                    "error": message.get("error"),
+                })
+                command = result.get("command")
+                if command:
+                    mqtt_gateway.publish_command(board_id, command)
+            except (ValueError, TypeError):
+                pass
+            board.firmware_transport = "mqtt-v3"
+        group_manager.persist_board(group_id, board)
+        publish_mqtt_board_state(group_id, board)
+    emit_board_delta(group_id, board)
+
+
+def handle_mqtt_state_ack(board_id: str, payload: bytes) -> None:
+    try:
+        message = decode_json(payload)
+        epoch = int(str(message.get("epoch", "0")), 16)
+        revision = int(message["revision"])
+    except (MqttProtocolError, KeyError, TypeError, ValueError):
+        return
+    group_id = mqtt_board_group(board_id)
+    board = group_manager.get_game_state(group_id).get_board(board_id)
+    if not board:
+        return
+    # A state acknowledgement is diagnostic only. Never let a delayed board
+    # move the dashboard backwards or make an old broker epoch look current.
+    if epoch != mqtt_gateway.epoch:
+        return
+    previous = board.mqtt_config_revision
+    if previous is not None:
+        delta = (revision - previous) & 0xffffffff
+        if delta == 0 or delta >= 0x80000000:
+            return
+    board.mqtt_config_epoch = epoch
+    board.mqtt_config_revision = revision
+    board.mqtt_last_seen = time.time()
+    emit_board_delta(group_id, board)
+
+
+def handle_mqtt_command_ack(board_id: str, payload: bytes) -> None:
+    try:
+        message = decode_json(payload)
+    except MqttProtocolError:
+        return
+    group_id = mqtt_board_group(board_id)
+    board = group_manager.get_game_state(group_id).get_board(board_id)
+    if not board:
+        return
+    command_id = message.get("command_id")
+    try:
+        if isinstance(command_id, str) and command_id:
+            firmware_manager.record_firmware_sync(group_id, board, {
+                "protocol": 1,
+                "firmware_version": board.firmware_version or "0.0.0",
+                "config_schema": board.config_schema,
+                "ota_port": board.ota_port,
+                "job_id": command_id,
+                "state": message.get("state", "failed"),
+                "error": message.get("error"),
+            })
+    except (ValueError, TypeError):
+        return
+    board.firmware_job_id = command_id
+    board.firmware_job_state = message.get("state")
+    board.firmware_job_error = message.get("error")
+    board.mqtt_last_seen = time.time()
+    emit_board_delta(group_id, board)
+
+
+def handle_mqtt_event(board_id: str, payload: bytes) -> None:
+    try:
+        message = decode_json(payload)
+        event_id = int(message["event_id"])
+        boot_id = int(message["boot_id"])
+        event_type = message.get("type")
+    except (MqttProtocolError, KeyError, TypeError, ValueError):
+        return
+    if (not 0 <= event_id <= 0xffffffff or not 0 <= boot_id <= 0xffffffff or
+            not isinstance(event_type, str) or len(event_type) > 32):
+        return
+    group_id = mqtt_board_group(board_id)
+    state = group_manager.get_game_state(group_id)
+    board = state.get_board(board_id) or state.register_board(board_id)
+    original_ack = group_manager.state_store.get_mqtt_event_ack(
+        group_id, board_id, boot_id, event_id
+    )
+    if original_ack is not None:
+        mqtt_gateway.publish_event_ack(board_id, original_ack)
+        return
+    status = "applied"
+    reason = None
+    if event_type == "building_add":
+        try:
+            result = board.register_building(str(message["uid"]), int(message["building_type"]))
+        except (KeyError, TypeError, ValueError):
+            result = "invalid"
+        if result in {"invalid", "conflict", "capacity"}:
+            status, reason = "rejected", result
+        elif result == "added":
+            state.bump_config_revision()
+            group_manager.persist_board(group_id, board)
+    elif event_type == "buildings_reset":
+        board.clear_registered_buildings()
+        state.bump_config_revision()
+        group_manager.persist_board(group_id, board)
+    else:
+        status, reason = "rejected", "unsupported_event"
+    ack = {"v": 3, "boot_id": boot_id, "event_id": event_id, "status": status}
+    if reason:
+        ack["reason"] = reason
+    group_manager.state_store.save_mqtt_event_ack(
+        group_id, board_id, boot_id, event_id, ack
+    )
+    mqtt_gateway.publish_event_ack(board_id, ack)
+    emit_board_delta(group_id, board)
+    if status == "applied":
+        publish_mqtt_group_state(group_id)
+
+
+def mqtt_gateway_connected() -> None:
+    for group_id in group_manager.get_all_groups():
+        publish_mqtt_group_state(group_id)
+
+
+mqtt_gateway = MqttGateway({
+    "telemetry": handle_mqtt_telemetry,
+    "availability": handle_mqtt_availability,
+    "state-ack": handle_mqtt_state_ack,
+    "command-ack": handle_mqtt_command_ack,
+    "events": handle_mqtt_event,
+    "connected": mqtt_gateway_connected,
+})
+mqtt_gateway.start()
+
+
+def _mqtt_public_uri() -> str:
+    """Return the externally reachable WSS endpoint without exposing broker ports."""
+    configured = mqtt_gateway.public_uri
+    if configured:
+        return configured.rstrip("/")
+    host = request.host.split(":", 1)[0]
+    return f"wss://{host}/mqtt"
+
+
+@app.route('/board/bootstrap/v3', methods=['GET'])
+@require_board_auth
+def board_bootstrap_v3():
+    """Return the board-scoped MQTT connection details after HTTP login."""
+    user = getattr(request, 'user', {})
+    board_id = user.get('username', '')
+    if not board_id:
+        return jsonify({'error': 'INVALID_BOARD'}), 400
+    if not mqtt_gateway.healthy or os.getenv('MQTT_V3_ENABLED', 'true').lower() not in {
+        '1', 'true', 'yes', 'on'
+    }:
+        return jsonify({'error': 'MQTT_V3_UNAVAILABLE'}), 503
+    return jsonify({
+        'protocol': 3,
+        'mqtt_uri': _mqtt_public_uri(),
+        'topic_root': topic_root(board_id),
+        'telemetry_interval_ms': 200,
+        'keepalive_seconds': 10,
+        'server_stale_ms': 3000,
+    })
+
+
+def _sse_encode(item: dict) -> str:
+    data = json.dumps(item.get('data', {}), separators=(',', ':'), ensure_ascii=True)
+    return f"id: {int(item['id'])}\nevent: {item['event']}\ndata: {data}\n\n"
+
+
+@app.route('/events/v3', methods=['GET'])
+@require_lecturer_auth
+def events_v3():
+    """Stream group-scoped dashboard deltas with bounded replay."""
+    user = getattr(request, 'user', {})
+    group_id = user.get('group_id', 'group1')
+    try:
+        after = max(0, int(request.args.get('after', '0')))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'after must be an integer'}), 400
+    subscriber = event_hub.subscribe(group_id, after)
+
+    @stream_with_context
+    def generate():
+        try:
+            while True:
+                try:
+                    item = subscriber.get(timeout=15)
+                    yield _sse_encode(item)
+                except Empty:
+                    yield ': keepalive\n\n'
+        finally:
+            event_hub.unsubscribe(group_id, subscriber)
+
+    return Response(generate(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache, no-store',
+        'X-Accel-Buffering': 'no',
+        'Connection': 'keep-alive',
+    })
 
 def generate_game_statistics(game_state: GameState):
     """
@@ -920,6 +1248,7 @@ def post_values():
         
         script = user_game_state.get_script()
         board.update_power(production, consumption, script)
+        emit_board_delta(user.get('group_id', 'group1'), board)
         return b'OK', 200, {'Content-Type': 'application/octet-stream'}
         
     except struct.error as e:
@@ -949,6 +1278,7 @@ def board_sync_v2():
 
         record_board_firmware_metadata(board)
 
+        group_id = user.get('group_id', 'group1')
         script = user_game_state.get_script()
         board.update_power(
             sync_request['production'], sync_request['consumption'], script
@@ -958,33 +1288,10 @@ def board_sync_v2():
                 source.name,
                 float(sync_request['production_by_source'][source.value]),
             )
+        emit_board_delta(group_id, board)
 
-        coefficients = [0] * 9
-        min_power = [0] * 9
-        max_power = [0] * 9
-        consumption = [0] * len(Enak.Building)
-        group_id = user.get('group_id', 'group1')
-        game_active = group_manager.is_game_active(group_id)
-
-        if game_active and script:
-            current_coefficients = script.getCurrentProductionCoefficients()
-            for source in Source:
-                coefficients[source.value] = int(
-                    float(current_coefficients.get(source, 0.0)) * 1000
-                )
-
-                override = user_game_state.get_production_override(source)
-                power_range = override or script.getCurrentProductionRange(source)
-                if power_range:
-                    min_power[source.value] = int(float(power_range[0]) * 1000)
-                    max_power[source.value] = int(float(power_range[1]) * 1000)
-
-            for building in Enak.Building:
-                override = user_game_state.get_consumption_override(building)
-                value = (override if override is not None else
-                         script.getCurrentBuildingConsumption(building))
-                if value is not None:
-                    consumption[building.value] = int(float(value) * 1000)
+        _, game_active, coefficients, min_power, max_power, consumption, counts = \
+            authoritative_state_values(group_id, board)
 
         response = BoardBinaryProtocol.pack_sync_v2_response(
             sequence=sync_request['sequence'],
@@ -994,7 +1301,7 @@ def board_sync_v2():
             min_power_milli=min_power,
             max_power_milli=max_power,
             consumption_milli=consumption,
-            building_counts=board.get_counts(),
+            building_counts=counts,
             firmware_mode=(
                 group_manager.is_firmware_mode_active(group_id) and
                 board.firmware_protocol >= 1
@@ -1034,6 +1341,8 @@ def board_firmware_sync():
         result['firmware_mode'] = active
         if not active:
             result['command'] = None
+        emit_board_delta(group_id, board)
+        event_hub.publish(group_id, 'firmware_delta', board.to_dict())
         return jsonify(result)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
@@ -1214,6 +1523,8 @@ def register():
         board.update_last_activity()
         group_id = user.get('group_id', 'group1')
         group_manager.persist_board(group_id, board)
+        publish_mqtt_board_state(group_id, board)
+        emit_board_delta(group_id, board)
         
         logger.info(f"Board {board_id} registered successfully")
         response = BoardBinaryProtocol.pack_registration_response(True, "Registration successful")
@@ -1345,6 +1656,11 @@ def start_game_scenario():
     
     # Start new game through group manager - this clears ended state and resets boards
     group_manager.start_new_game(group_id, script, scenario_id)
+    publish_mqtt_group_state(group_id)
+    emit_game_delta(group_id, {
+        'status': 'started', 'scenario_id': scenario_id,
+        'game_active': group_manager.is_game_active(group_id),
+    })
     
     # DON'T automatically advance - let frontend decide when to start
     
@@ -1401,6 +1717,7 @@ def next_round():
     
     user = getattr(request, 'user', {})
     lecturer_name = user.get('username', 'Unknown Lecturer')
+    group_id = user.get('group_id', 'group1')
     
     # Save current round data to history for all boards BEFORE advancing
     user_game_state.save_all_boards_current_round_to_history()
@@ -1504,12 +1821,16 @@ def next_round():
             
             response_data["display_data"] = display_data
         
+        publish_mqtt_group_state(group_id)
+        emit_game_delta(group_id, response_data)
         return jsonify(response_data)
     else:
         user_game_state.bump_config_revision()
         user = getattr(request, 'user', {})
         group_id = user.get('group_id', 'group1')
         game_statistics = finalize_completed_game(group_id, user_game_state)
+        publish_mqtt_group_state(group_id)
+        emit_game_delta(group_id, {'status': 'finished', 'game_active': False})
         debug_print(f"Game finished and marked as ended for group {group_id}")
         
         return jsonify({
@@ -1673,6 +1994,8 @@ def end_game():
     user_game_state = get_user_game_state(request.user)
     
     game_statistics = finalize_completed_game(group_id, user_game_state)
+    publish_mqtt_group_state(group_id)
+    emit_game_delta(group_id, {'status': 'finished', 'game_active': False})
     
     lecturer_name = user.get('username', 'Unknown Lecturer')
     
@@ -1687,6 +2010,10 @@ def end_game():
 @require_lecturer_auth
 def poll_for_users():
     """Endpoint for authenticated lecturers to get status of all boards"""
+    # Capture the cursor before assembling the snapshot. Any event committed
+    # while this response is being built then has a larger ID and is replayed
+    # by the subsequent SSE connection instead of being lost in the handoff.
+    snapshot_stream_seq = event_hub.cursor()
     # Get user's game state
     user_game_state = get_user_game_state(request.user)
     script = user_game_state.get_script()
@@ -1849,7 +2176,8 @@ def poll_for_users():
             "username": user.get('username', 'Unknown')
         },
         "round_details": round_details,
-        "board_names": board_names
+        "board_names": board_names,
+        "stream_seq": snapshot_stream_seq,
     })
 
 @app.route('/game/status', methods=['GET'])
@@ -1892,6 +2220,10 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "service": "CoreAPI",
+        "mqtt_v3": {
+            "enabled": mqtt_gateway.enabled,
+            "connected": mqtt_gateway.healthy,
+        },
         "boards_registered": len(default_game_state.boards),
         "game_active": group_manager.is_game_active('group1'),
         "current_round": script.current_round_index if script else None
@@ -2587,6 +2919,8 @@ def add_building():
     if result == 'added':
         user_game_state.bump_config_revision()
     group_manager.persist_board(group_id, board)
+    publish_mqtt_group_state(group_id)
+    emit_board_delta(group_id, board)
     return (b'ALREADY_REGISTERED' if result == 'duplicate' else b'OK'), 200
 
 @app.route('/board/reset_buildings', methods=['POST'])
@@ -2607,6 +2941,8 @@ def board_reset_buildings():
     board.clear_registered_buildings()
     user_game_state.bump_config_revision()
     group_manager.persist_board(group_id, board)
+    publish_mqtt_board_state(group_id, board)
+    emit_board_delta(group_id, board)
     return b'OK', 200
 
 @app.route('/board/get_counts', methods=['GET'])
@@ -2659,6 +2995,8 @@ def lecturer_update_counts():
     board.set_counts(counts)
     user_game_state.bump_config_revision()
     group_manager.persist_board(group_id, board)
+    publish_mqtt_group_state(group_id)
+    emit_board_delta(group_id, board)
     return jsonify({'success': True})
 
 @app.route('/lecturer/reset_board_buildings', methods=['POST'])
@@ -2680,6 +3018,8 @@ def lecturer_reset_board_buildings():
     board.clear_registered_buildings()
     user_game_state.bump_config_revision()
     group_manager.persist_board(group_id, board)
+    publish_mqtt_group_state(group_id)
+    emit_board_delta(group_id, board)
     return jsonify({'success': True, 'board_id': board_id})
 
 @app.route('/lecturer/production_overrides', methods=['GET', 'POST'])
@@ -2701,6 +3041,8 @@ def lecturer_production_overrides():
         if not data:
             user_game_state.production_range_overrides.clear()
             user_game_state.bump_config_revision()
+            publish_mqtt_group_state(group_id)
+            emit_game_delta(group_id, {'type': 'production_overrides'})
             return jsonify({'success': True})
         for source_name, vals in data.items():
             try:
@@ -2712,6 +3054,8 @@ def lecturer_production_overrides():
             if min_val is None or max_val is None:
                 return jsonify({'error': 'min and max required'}), 400
             user_game_state.set_production_override(source, min_val, max_val)
+        publish_mqtt_group_state(group_id)
+        emit_game_delta(group_id, {'type': 'production_overrides'})
         return jsonify({'success': True})
 
 @app.route('/lecturer/consumption_overrides', methods=['GET', 'POST'])
@@ -2732,6 +3076,8 @@ def lecturer_consumption_overrides():
         if not data:
             user_game_state.consumption_overrides.clear()
             user_game_state.bump_config_revision()
+            publish_mqtt_group_state(group_id)
+            emit_game_delta(group_id, {'type': 'consumption_overrides'})
             return jsonify({'success': True})
         for building_name, value in data.items():
             try:
@@ -2739,6 +3085,8 @@ def lecturer_consumption_overrides():
             except KeyError:
                 return jsonify({'error': f'Unknown building: {building_name}'}), 400
             user_game_state.set_consumption_override(building, value)
+        publish_mqtt_group_state(group_id)
+        emit_game_delta(group_id, {'type': 'consumption_overrides'})
         return jsonify({'success': True})
 
 @app.route('/lecturer/current_production_ranges', methods=['GET'])

@@ -299,6 +299,14 @@ class BoardState:
 		self.firmware_job_id = None
 		self.firmware_job_state = None
 		self.firmware_job_error = None
+		# MQTT v3 transport diagnostics. These fields are intentionally
+		# ephemeral and are refreshed by the MQTT gateway heartbeat.
+		self.mqtt_online = False
+		self.mqtt_last_seen = 0.0
+		self.mqtt_boot_id = None
+		self.mqtt_last_sequence = None
+		self.mqtt_config_epoch = None
+		self.mqtt_config_revision = None
 
 	def is_connected(self) -> bool:
 		"""
@@ -505,7 +513,10 @@ class BoardState:
 		``capacity`` so the HTTP layer can provide a stable response without
 		double-counting retried requests.
 		"""
-		if not uid or not 0 <= building_type < len(self.authoritative_counts):
+		if (not isinstance(uid, str) or not 1 <= len(uid) <= 64 or
+			any(ord(char) < 0x20 for char in uid) or
+			not isinstance(building_type, int) or
+			not 0 <= building_type < len(self.authoritative_counts)):
 			return "invalid"
 
 		for building in self.connected_buildings:
@@ -614,6 +625,12 @@ class BoardState:
 			"firmware_job_id": self.firmware_job_id,
 			"firmware_job_state": self.firmware_job_state,
 			"firmware_job_error": self.firmware_job_error
+			,"mqtt_online": self.mqtt_online,
+			"mqtt_last_seen": self.mqtt_last_seen,
+			"mqtt_last_sequence": self.mqtt_last_sequence,
+			"mqtt_config_epoch": self.mqtt_config_epoch,
+			"mqtt_config_revision": self.mqtt_config_revision,
+			"transport": "mqtt-v3" if self.mqtt_online else "http-v2"
 		}
 
 	###### for board interactions with the building counts
