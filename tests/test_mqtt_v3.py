@@ -1,7 +1,10 @@
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
+from mqtt_gateway import MqttGateway
 from mqtt_protocol import (MqttProtocolError, STATE, TELEMETRY, decode_json,
                            pack_state, pack_telemetry, unpack_state,
                            unpack_telemetry)
@@ -53,6 +56,36 @@ class EventHubTests(unittest.TestCase):
         subscriber = hub.subscribe("g", 0)
         self.assertEqual(subscriber.get_nowait()["event"], "resync")
         hub.unsubscribe("g", subscriber)
+
+
+class MqttGatewayCallbackTests(unittest.TestCase):
+    def test_success_reason_code_marks_gateway_connected(self):
+        gateway = object.__new__(MqttGateway)
+        gateway.host = "mosquitto"
+        gateway.port = 1883
+        gateway.epoch = 1
+        gateway._connected = threading.Event()
+        gateway.handlers = {}
+        gateway.publish_json = Mock(return_value=True)
+        client = Mock()
+
+        gateway._on_connect(client, None, None, 0)
+
+        self.assertTrue(gateway._connected.is_set())
+        client.subscribe.assert_called_once()
+
+    def test_failure_reason_code_leaves_gateway_disconnected(self):
+        gateway = object.__new__(MqttGateway)
+        gateway.host = "mosquitto"
+        gateway.port = 1883
+        gateway._connected = threading.Event()
+        gateway.handlers = {}
+        client = Mock()
+
+        gateway._on_connect(client, None, None, 135)
+
+        self.assertFalse(gateway._connected.is_set())
+        client.subscribe.assert_not_called()
 
 
 if __name__ == "__main__":

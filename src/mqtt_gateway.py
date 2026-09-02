@@ -13,6 +13,7 @@ import queue
 import secrets
 import threading
 import time
+import logging
 from typing import Any, Callable
 
 try:
@@ -21,6 +22,9 @@ except ImportError:  # Keep protocol/unit-test imports usable without broker dep
     mqtt = None
 
 from mqtt_protocol import BOARD_ID_RE, MqttProtocolError, decode_json, topic_root
+
+
+logger = logging.getLogger(__name__)
 
 
 class MqttGateway:
@@ -61,8 +65,10 @@ class MqttGateway:
                 self._availability_payload(False), qos=1, retain=True,
             )
             self.client.on_connect = self._on_connect
+            self.client.on_connect_fail = self._on_connect_fail
             self.client.on_disconnect = self._on_disconnect
             self.client.on_message = self._on_message
+            self.client.enable_logger(logger)
 
     @property
     def healthy(self) -> bool:
@@ -82,6 +88,7 @@ class MqttGateway:
             self.client.loop_start()
         except Exception:
             self._connected.clear()
+            logger.exception("Unable to start MQTT connection to %s:%s", self.host, self.port)
 
     def stop(self) -> None:
         self._stopping.set()
@@ -94,8 +101,13 @@ class MqttGateway:
             pass
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
-        if reason_code != mqtt.ReasonCode(0):
+        # Callback API v2 ReasonCode objects compare directly with integers.
+        # Constructing ReasonCode(0) is invalid because its first argument is
+        # an MQTT packet type, not the numeric reason-code value.
+        if reason_code != 0:
             self._connected.clear()
+            logger.error("MQTT connection rejected by %s:%s: %s", self.host, self.port,
+                         reason_code)
             return
         subscriptions = [
             ("enak/v3/boards/+/telemetry", 0),
@@ -112,9 +124,17 @@ class MqttGateway:
         callback = self.handlers.get("connected")
         if callback:
             callback()
+        logger.info("MQTT connected to %s:%s", self.host, self.port)
+
+    def _on_connect_fail(self, client, userdata):
+        self._connected.clear()
+        logger.error("MQTT TCP connection to %s:%s failed; retrying", self.host, self.port)
 
     def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties=None):
         self._connected.clear()
+        if reason_code != 0:
+            logger.warning("MQTT disconnected from %s:%s: %s", self.host, self.port,
+                           reason_code)
         callback = self.handlers.get("disconnected")
         if callback:
             callback()
