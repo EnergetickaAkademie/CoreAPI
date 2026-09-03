@@ -1,5 +1,6 @@
 import struct
 import sys
+import time
 import types
 import unittest
 from pathlib import Path
@@ -23,6 +24,19 @@ from state_store import BoardStateStore
 
 
 class ProtocolCorrectnessTests(unittest.TestCase):
+    def test_connection_status_uses_freshest_transport(self):
+        board = BoardState("board1")
+        board.last_updated = time.time() - 30
+        board.mqtt_last_seen = time.time()
+        board.mqtt_online = True
+        self.assertTrue(board.is_connected())
+
+        board.mqtt_online = False
+        self.assertFalse(board.is_connected())
+
+        board.update_last_activity()
+        self.assertTrue(board.is_connected())
+
     def test_registration_request_round_trip(self):
         payload = BoardBinaryProtocol.pack_registration_request(7, "main", "esp32")
         self.assertEqual(

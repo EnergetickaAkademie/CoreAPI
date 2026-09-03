@@ -310,12 +310,16 @@ class BoardState:
 
 	def is_connected(self) -> bool:
 		"""
-		Check if the board is considered connected based on last update time.
-		Returns False if the board hasn't updated within CONNECTION_TIMEOUT seconds.
+		Check the freshest transport activity. MQTT availability may arrive
+		before the first telemetry packet after a reconnect, and its retained
+		Last Will should mark the board offline immediately. A later HTTP v2
+		sync can still take ownership while MQTT is unavailable.
 		"""
 		current_time = time.time()
-		time_since_update = current_time - self.last_updated
-		return time_since_update <= self.CONNECTION_TIMEOUT
+		if self.mqtt_last_seen > self.last_updated:
+			return (self.mqtt_online and
+				current_time - self.mqtt_last_seen <= self.CONNECTION_TIMEOUT)
+		return current_time - self.last_updated <= self.CONNECTION_TIMEOUT
 
 	def time_since_last_update(self) -> float:
 		"""
