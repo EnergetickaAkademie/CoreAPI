@@ -140,6 +140,16 @@ class ProtocolCorrectnessTests(unittest.TestCase):
         self.assertEqual(board.get_connected_buildings(), [])
         self.assertEqual(board.register_building("04-aabb", 7), "added")
 
+    def test_removing_building_decrements_count_and_allows_readd(self):
+        board = BoardState("board1")
+        self.assertEqual(board.register_building("04-aabb", 7), "added")
+        self.assertTrue(board.remove_connected_building("04-aabb"))
+        self.assertEqual(board.get_counts()[7], 0)
+        self.assertEqual(board.get_connected_buildings(), [])
+        self.assertFalse(board.remove_connected_building("04-aabb"))
+        self.assertEqual(board.register_building("04-aabb", 7), "added")
+        self.assertEqual(board.get_counts()[7], 1)
+
     def test_lowering_authoritative_counts_prunes_stale_uids(self):
         board = BoardState("board1")
         self.assertEqual(board.register_building("04-aabb", 7), "added")

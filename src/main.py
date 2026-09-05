@@ -2945,6 +2945,39 @@ def board_reset_buildings():
     emit_board_delta(group_id, board)
     return b'OK', 200
 
+@app.route('/board/remove_building', methods=['POST'])
+@require_board_auth
+def remove_building():
+    """Remove one NFC building from the authenticated board."""
+    data = request.get_data()
+    if not 1 <= len(data) <= 64:
+        return b'INVALID_UID', 400
+    try:
+        uid = data.decode('utf-8')
+    except UnicodeDecodeError:
+        return b'INVALID_UID', 400
+    if any(ord(char) < 0x20 for char in uid):
+        return b'INVALID_UID', 400
+
+    user = getattr(request, 'user', {})
+    board_id = user.get('username', '')
+    if not board_id:
+        return b'INVALID_BOARD', 400
+    group_id = user.get('group_id', 'group1')
+    user_game_state = get_user_game_state(request.user)
+    board = user_game_state.get_board(board_id)
+    if not board:
+        return b'BOARD_NOT_FOUND', 404
+
+    if board.remove_connected_building(uid):
+        user_game_state.bump_config_revision()
+        group_manager.persist_board(group_id, board)
+        publish_mqtt_group_state(group_id)
+        emit_board_delta(group_id, board)
+    # Removing an already absent UID is intentionally idempotent. This lets a
+    # board safely clear its local duplicate cache after a retried request.
+    return b'OK', 200
+
 @app.route('/board/get_counts', methods=['GET'])
 @require_board_auth
 def get_counts():

@@ -539,12 +539,29 @@ class BoardState:
 		self.update_last_activity()
 		return "added"
 
-	def remove_connected_building(self, uid: str):
+	def remove_connected_building(self, uid: str) -> bool:
 		"""
-		Remove a connected building from the board state.
+		Remove a connected building and decrement its authoritative count.
 		"""
-		self.connected_buildings = [b for b in self.connected_buildings if b['uid'] != uid]
+		removed_type = None
+		remaining = []
+		for building in self.connected_buildings:
+			if building.get('uid') == uid and removed_type is None:
+				removed_type = building.get('building_type')
+				continue
+			remaining.append(building)
+		if removed_type is None:
+			self.update_last_activity()
+			return False
+
+		self.connected_buildings = remaining
+		if (isinstance(removed_type, int) and
+			0 <= removed_type < len(self.authoritative_counts)):
+			self.authoritative_counts[removed_type] = max(
+				0, self.authoritative_counts[removed_type] - 1
+			)
 		self.update_last_activity()
+		return True
 
 	def get_connected_buildings(self) -> List[Dict[str, Any]]:
 		"""
