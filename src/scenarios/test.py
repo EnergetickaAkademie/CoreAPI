@@ -28,7 +28,7 @@ building_consumptions = {
 
 source_productions = {
 	# Default source production ranges (min, max) - same as demo scenario
-	Source.COAL: (250, 500),
+	Source.COAL: (500, 1000),
 	Source.HYDRO: (0, 100),
 	Source.HYDRO_STORAGE: (-200, 200),
 	Source.GAS: (0, 500),

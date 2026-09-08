@@ -24,7 +24,7 @@ building_consumptions = {
 
 source_productions = {
 	#these numbers define the minimum and maximum
-	Source.COAL: (250, 500),
+	Source.COAL: (500, 1000),
 	Source.HYDRO: (0, 200),
 	Source.HYDRO_STORAGE: (-200, 200),
 	Source.GAS: (0, 500),
