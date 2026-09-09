@@ -85,7 +85,7 @@ def test_fully_served_source_scores_use_cost_and_emissions():
     assert coal["finances"] == round(100 * (1 - 101 / 132), 2)
     assert gas["ecology"] == 50
     assert gas["finances"] == 0
-    assert gas["popularity"] == 70
+    assert gas["popularity"] == 62.5
 
 
 def test_development_uses_only_the_common_final_round():

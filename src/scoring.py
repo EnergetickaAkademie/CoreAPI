@@ -209,7 +209,7 @@ def get_scores(team_stats: Mapping, team: str, num_rounds: int = None, developme
     finances = get_finances_score(team_stats, team)
     stability = 100 * get_balance_score(team_stats, team, num_rounds)
     development = get_building_popularity(team_stats, team, development_scores)
-    popularity = (stability + finances + ecology + 2 * development) / 5
+    popularity = (stability + finances + ecology + development) / 4
 
     return {
         "ecology": round(_clamp(ecology), 2),
