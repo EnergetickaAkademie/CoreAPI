@@ -1547,7 +1547,7 @@ def lecturer_firmware_boards():
     configured = []
     try:
         from user_config import get_user_config
-        configured = list((get_user_config().config.get('boards') or {}).keys())
+        configured = get_user_config().get_board_ids_for_group(group_id)
     except Exception:
         pass
     board_ids = list(dict.fromkeys(list(state.boards.keys()) + configured))
@@ -1914,17 +1914,8 @@ def get_game_statistics():
     from user_config import get_user_config
     board_names = {}
     try:
-        user_config = get_user_config()
-        if user_config and user_config.config and 'boards' in user_config.config:
-            for board_id in user_config.config['boards'].keys():
-                display_name = user_config.get_board_display_name(board_id)
-                if display_name:
-                    # Map both "board1" and "1" to handle different board_id formats
-                    board_names[board_id] = display_name
-                    # Extract numeric part (e.g., "board1" -> "1")
-                    if board_id.startswith('board'):
-                        numeric_id = board_id[5:]  # Remove "board" prefix
-                        board_names[numeric_id] = display_name
+        board_names = get_user_config().get_board_names_for_group(
+            request.user.get('group_id', 'group1'))
     except Exception as e:
         debug_print(f"Error creating board names mapping for statistics: {e}")
     
@@ -2031,9 +2022,10 @@ def poll_for_users():
     from user_config import get_user_config
     try:
         user_config = get_user_config()
-        if user_config and user_config.config and 'boards' in user_config.config:
+        if user_config and user_config.config:
             connected_board_ids = set(user_game_state.boards.keys())
-            for config_board_id in user_config.config['boards'].keys():
+            group_id = request.user.get('group_id', 'group1')
+            for config_board_id in user_config.get_board_ids_for_group(group_id):
                 # Use the full config_board_id as the board_id (no more parsing)
                 if config_board_id not in connected_board_ids:
                     # Create placeholder for disconnected board
@@ -2144,17 +2136,8 @@ def poll_for_users():
     from user_config import get_user_config
     board_names = {}
     try:
-        user_config = get_user_config()
-        if user_config and user_config.config and 'boards' in user_config.config:
-            for board_id in user_config.config['boards'].keys():
-                display_name = user_config.get_board_display_name(board_id)
-                if display_name:
-                    # Map both "board1" and "1" to handle different board_id formats
-                    board_names[board_id] = display_name
-                    # Extract numeric part (e.g., "board1" -> "1")
-                    if board_id.startswith('board'):
-                        numeric_id = board_id[5:]  # Remove "board" prefix
-                        board_names[numeric_id] = display_name
+        board_names = get_user_config().get_board_names_for_group(
+            request.user.get('group_id', 'group1'))
     except Exception as e:
         debug_print(f"Error creating board names mapping: {e}")
     
@@ -2847,8 +2830,9 @@ def get_configured_users():
         from user_config import get_user_config
         config = get_user_config()
         
-        board_users = config.get_boards()
-        lecturer_users = config.get_lecturers()
+        group_id = request.user.get('group_id', 'group1')
+        board_users = [u for u in config.get_boards() if u['group_id'] == group_id]
+        lecturer_users = [u for u in config.get_lecturers() if u['group_id'] == group_id]
         
         # Remove passwords from response
         for user in board_users + lecturer_users:

@@ -148,6 +148,24 @@ class UserConfig:
         """Get group configuration"""
         return self.config.get("groups", {})
     
+    def get_board_ids_for_group(self, group_id: str) -> List[str]:
+        """Configured board usernames that belong to the given group."""
+        boards = self.config.get("boards", {}) or {}
+        return [board_id for board_id, info in boards.items()
+                if str(info.get("group", "group1")) == str(group_id)]
+
+    def get_board_names_for_group(self, group_id: str) -> Dict[str, str]:
+        """Display-name mapping for a group's boards (also keyed by the numeric
+        suffix of legacy "boardN" usernames)."""
+        names = {}
+        for board_id in self.get_board_ids_for_group(group_id):
+            display_name = self.get_board_display_name(board_id)
+            if display_name:
+                names[board_id] = display_name
+                if board_id.startswith('board'):
+                    names[board_id[5:]] = display_name
+        return names
+
     def get_board_display_name(self, board_id: str) -> Optional[str]:
         """Get the display name for a board from configuration"""
         boards = self.config.get("boards", {})

@@ -174,6 +174,7 @@ class SimpleAuth:
             from user_config import get_user_config
             config = get_user_config()
             config.reload()
+            self.sync_users_from_config()
             print("✓ Configuration reloaded successfully")
             return True
         except ImportError:
@@ -193,8 +194,31 @@ class SimpleAuth:
         except jwt.InvalidTokenError:
             return None  # Invalid token
     
+    def upsert_user(self, username, password, user_type, group_id='group1'):
+        """Create a user or overwrite its password, type and group."""
+        hashed_password, salt = self.hash_password(password)
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute('''
+                INSERT INTO users (username, password_hash, salt, user_type, group_id)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(username) DO UPDATE SET
+                    password_hash = excluded.password_hash,
+                    salt = excluded.salt,
+                    user_type = excluded.user_type,
+                    group_id = excluded.group_id
+            ''', (username, hashed_password, salt, user_type, group_id))
+            conn.commit()
+        finally:
+            conn.close()
+
     def load_users_if_empty(self):
-        """Load users from configuration files if database is empty"""
+        """Sync users from the TOML configuration on every startup.
+
+        Users added or changed in users.toml are picked up on restart, not only
+        when the database is first created. Falls back to default users only
+        when the database is empty and no configuration is available.
+        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -204,6 +228,21 @@ class SimpleAuth:
         
         if user_count == 0:
             self.create_users_from_config()
+        else:
+            self.sync_users_from_config()
+
+    def sync_users_from_config(self):
+        """Upsert every user from the TOML configuration into the database."""
+        try:
+            from user_config import get_user_config
+            users = get_user_config().get_all_users()
+            for user in users:
+                self.upsert_user(user['username'], user['password'],
+                                 user['user_type'], user['group_id'])
+            if users:
+                print(f"✓ Synced {len(users)} users from configuration")
+        except Exception as e:
+            print(f"⚠️  Error syncing users from configuration: {e}")
 
     def create_users_from_config(self):
         """Create users from TOML configuration file"""
