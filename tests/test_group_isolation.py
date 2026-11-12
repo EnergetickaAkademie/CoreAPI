@@ -65,7 +65,7 @@ SCRIPT = textwrap.dedent("""
         users = client.get('/config/users', headers=h).get_json()
         assert {u['username'] for u in users['boards']} == expected[group], users
 
-    scenario_id = client.get('/scenarios', headers=headers['hlinsko']).get_json()['scenarios'][0]
+    scenario_id = client.get('/scenarios', headers=headers['hlinsko']).get_json()['scenarios'][0]['id']
     started = client.post('/start_game', json={'scenario_id': scenario_id}, headers=headers['hlinsko'])
     assert started.status_code == 200, started.get_json()
     advanced = client.post('/next_round', headers=headers['hlinsko'])

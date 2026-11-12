@@ -15,6 +15,8 @@ from scenarios.test import getScript as getTestScript
 from scenarios.allon import getScript as getAllOnScript
 from scenarios.allon_outage import getScript as getAllOnOutageScript
 from user_config import get_user_config
+from scenario_compiler import compile_document, export_script
+from scenario_store import get_scenario_store
 
 # Global debug flag from environment variable
 DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
@@ -36,8 +38,27 @@ available_script_generators: Dict[str, Callable[[], Script]] = {
 # Backwards compatibility - generate instances on demand
 available_scripts: Dict[str, Script] = {}
 
+CUSTOM_SCENARIO_PREFIX = "custom:"
+
+def is_custom_scenario_id(scenario_id: str) -> bool:
+	return isinstance(scenario_id, str) and scenario_id.startswith(CUSTOM_SCENARIO_PREFIX)
+
+def custom_scenario_key(scenario_id: str) -> str:
+	return scenario_id[len(CUSTOM_SCENARIO_PREFIX):]
+
+def get_builtin_document(scenario_id: str) -> dict:
+	"""Export a built-in Python scenario as an editor document (template)."""
+	if scenario_id not in available_script_generators:
+		raise ValueError(f"Unknown scenario: {scenario_id}")
+	return export_script(available_script_generators[scenario_id](), scenario_id)
+
 def get_fresh_script(scenario_id: str) -> Script:
 	"""Get a fresh script instance for the given scenario"""
+	if is_custom_scenario_id(scenario_id):
+		stored = get_scenario_store().get(custom_scenario_key(scenario_id))
+		if stored is None:
+			raise ValueError(f"Unknown scenario: {scenario_id}")
+		return compile_document(stored["document"])
 	if scenario_id in available_script_generators:
 		return available_script_generators[scenario_id]()
 	elif scenario_id in available_scripts:

@@ -14,6 +14,11 @@ import numpy as np
 from queue import Empty
 from werkzeug.middleware.proxy_fix import ProxyFix
 from state import GameState, available_scripts, available_script_generators, get_fresh_script, BoardState
+from state import (CUSTOM_SCENARIO_PREFIX, is_custom_scenario_id, custom_scenario_key,
+                   get_builtin_document)
+from scenario_compiler import validate as validate_scenario_document, new_document as new_scenario_document
+from scenario_store import (get_scenario_store, image_exists_for, resolve_slide_path,
+                            list_presentation_files, list_uploads, save_upload, MAX_UPLOAD_BYTES)
 from simple_auth import require_lecturer_auth, require_board_auth, require_auth, optional_auth, auth
 from binary_protocol import BoardBinaryProtocol, BinaryProtocolError
 from enak import Enak, Source
@@ -1555,7 +1560,7 @@ def lecturer_firmware_boards():
     for board_id in board_ids:
         board = state.get_board(board_id)
         if board is None:
-            result.append({'board_id': board_id, 'display_name': f'Tým {board_id}',
+            result.append({'board_id': board_id, 'display_name': BoardState.generate_display_name(board_id),
                            'connected': False, 'ota_ready': False,
                            'firmware_version': None, 'firmware_error': 'Board has not connected'})
             continue
@@ -1624,12 +1629,128 @@ def lecturer_firmware_job(job_id):
 @app.route('/scenarios', methods=['GET'])
 @require_lecturer_auth
 def get_scenarios():
-    """Get list of available scenarios"""
-    scenarios = list(available_scripts.keys())
+    """Get list of available scenarios: built-in ones first, then the caller's own."""
+    user = getattr(request, 'user', {})
+    scenarios = [
+        {"id": scenario_id, "name": scenario_id, "builtin": True}
+        for scenario_id in available_script_generators.keys()
+    ]
+    for item in get_scenario_store().list_for_owner(user.get('username', '')):
+        scenarios.append({
+            "id": f"{CUSTOM_SCENARIO_PREFIX}{item['id']}",
+            "name": item['name'],
+            "builtin": False,
+            "updated_at": item['updated_at'],
+        })
     return jsonify({
         "success": True,
         "scenarios": scenarios
     })
+
+
+def _scenario_owner():
+    return getattr(request, 'user', {}).get('username', '')
+
+
+def _own_custom_scenario(scenario_id: str):
+    """Stored custom scenario owned by the caller, or None."""
+    if not is_custom_scenario_id(scenario_id):
+        return None
+    return get_scenario_store().get(custom_scenario_key(scenario_id), owner=_scenario_owner())
+
+
+@app.route('/scenarios/<path:scenario_id>/document', methods=['GET'])
+@require_lecturer_auth
+def get_scenario_document(scenario_id):
+    """Scenario as an editor document (built-ins are exported as templates)."""
+    if is_custom_scenario_id(scenario_id):
+        stored = _own_custom_scenario(scenario_id)
+        if stored is None:
+            return jsonify({"error": "Scenario not found"}), 404
+        return jsonify({"id": scenario_id, "builtin": False, "document": stored['document']})
+    if scenario_id in available_script_generators:
+        try:
+            document = get_builtin_document(scenario_id)
+        except Exception as exc:
+            logger.exception("Failed to export scenario %s", scenario_id)
+            return jsonify({"error": f"Scenario cannot be exported: {exc}"}), 500
+        return jsonify({"id": scenario_id, "builtin": True, "document": document})
+    return jsonify({"error": "Scenario not found"}), 404
+
+
+@app.route('/scenario_defaults', methods=['GET'])
+@require_lecturer_auth
+def get_scenario_defaults():
+    """Blank document with default base values for a new scenario."""
+    return jsonify({"document": new_scenario_document()})
+
+
+def _validated_document_from_request():
+    document = request.get_json(silent=True)
+    if isinstance(document, dict) and isinstance(document.get('document'), dict):
+        document = document['document']
+    errors = validate_scenario_document(document, image_exists=image_exists_for(_scenario_owner()))
+    if errors:
+        return None, (jsonify({"error": "Scénář obsahuje chyby.", "errors": errors}), 400)
+    document['name'] = document['name'].strip()
+    return document, None
+
+
+@app.route('/custom_scenarios', methods=['POST'])
+@require_lecturer_auth
+def create_custom_scenario():
+    document, error = _validated_document_from_request()
+    if error:
+        return error
+    user = getattr(request, 'user', {})
+    key = get_scenario_store().create(_scenario_owner(), user.get('group_id', 'group1'), document)
+    return jsonify({"success": True, "id": f"{CUSTOM_SCENARIO_PREFIX}{key}", "name": document['name']}), 201
+
+
+@app.route('/custom_scenarios/<path:scenario_id>', methods=['PUT'])
+@require_lecturer_auth
+def update_custom_scenario(scenario_id):
+    if _own_custom_scenario(scenario_id) is None:
+        return jsonify({"error": "Scenario not found"}), 404
+    document, error = _validated_document_from_request()
+    if error:
+        return error
+    get_scenario_store().update(custom_scenario_key(scenario_id), _scenario_owner(), document)
+    return jsonify({"success": True, "id": scenario_id, "name": document['name']})
+
+
+@app.route('/custom_scenarios/<path:scenario_id>', methods=['DELETE'])
+@require_lecturer_auth
+def delete_custom_scenario(scenario_id):
+    if not is_custom_scenario_id(scenario_id) or not get_scenario_store().delete(
+            custom_scenario_key(scenario_id), _scenario_owner()):
+        return jsonify({"error": "Scenario not found"}), 404
+    return jsonify({"success": True})
+
+
+@app.route('/presentation_files', methods=['GET'])
+@require_lecturer_auth
+def get_presentation_files():
+    """Slide images available to the scenario editor."""
+    return jsonify({
+        "library": list_presentation_files(),
+        "uploads": list_uploads(_scenario_owner()),
+    })
+
+
+@app.route('/scenario_assets', methods=['POST'])
+@require_lecturer_auth
+def upload_scenario_asset():
+    """Upload a slide image for custom scenarios."""
+    upload = request.files.get('file')
+    if upload is None:
+        return jsonify({"error": "Chybí soubor."}), 400
+    data = upload.stream.read(MAX_UPLOAD_BYTES + 1)
+    try:
+        path = save_upload(_scenario_owner(), upload.filename, data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"success": True, "path": path}), 201
 
 @app.route('/start_game', methods=['POST'])
 @require_lecturer_auth
@@ -1641,7 +1762,13 @@ def start_game_scenario():
     if not scenario_id:
         return jsonify({"error": "scenario_id is required"}), 400
     
-    if scenario_id not in available_scripts:
+    scenario_name = scenario_id
+    if is_custom_scenario_id(scenario_id):
+        stored = _own_custom_scenario(scenario_id)
+        if stored is None:
+            return jsonify({"error": "Invalid scenario ID"}), 400
+        scenario_name = stored['name']
+    elif scenario_id not in available_scripts:
         return jsonify({"error": "Invalid scenario ID"}), 400
     
     # Get user information for group management
@@ -1655,7 +1782,7 @@ def start_game_scenario():
         return jsonify({"error": str(e)}), 400
     
     # Start new game through group manager - this clears ended state and resets boards
-    group_manager.start_new_game(group_id, script, scenario_id)
+    group_manager.start_new_game(group_id, script, scenario_name)
     publish_mqtt_group_state(group_id)
     emit_game_delta(group_id, {
         'status': 'started', 'scenario_id': scenario_id,
@@ -1676,32 +1803,16 @@ def start_game_scenario():
 @app.route('/slide_file/<path:filename>', methods=['GET'])
 @optional_auth  # Allow access for slide images
 def get_slide_file(filename):
-    """Get slide image by filename path"""
-    import os
-    
-    # Get presentations directory
-    presentations_dir = os.path.join(os.path.dirname(__file__), 'presentations')
-    
-    # Construct full path
-    filepath = os.path.join(presentations_dir, filename)
-    
-    # Security check: ensure the path is within presentations directory
-    real_presentations_dir = os.path.realpath(presentations_dir)
-    real_filepath = os.path.realpath(filepath)
-    
-    if not real_filepath.startswith(real_presentations_dir):
+    """Get slide image by path (built-in presentations or uploaded scenario slides)"""
+    real_filepath = resolve_slide_path(filename)
+    if real_filepath is None:
         return jsonify({"error": "Invalid file path"}), 403
-    
-    # Check if file exists
-    if os.path.exists(real_filepath):
-        try:
-            # Extract directory and filename
-            file_dir = os.path.dirname(real_filepath)
-            file_name = os.path.basename(real_filepath)
-            return send_from_directory(file_dir, file_name)
-        except FileNotFoundError:
-            return jsonify({"error": f"File {filename} not found"}), 404
-    
+
+    if os.path.isfile(real_filepath):
+        response = send_from_directory(os.path.dirname(real_filepath), os.path.basename(real_filepath))
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        return response
+
     return jsonify({"error": f"File {filename} not found"}), 404
 
 @app.route('/next_round', methods=['POST'])
